@@ -892,3 +892,34 @@ module "onprem_debezium" {
   vpc_name      = "Onprem"
   tags          = { VPC = "onprem", Component = "data" }
 }
+
+# =============================================================================
+# TASK 14: Amazon MSK Clusters (US-W and US-E)
+# =============================================================================
+
+module "msk_usw" {
+  source                     = "./modules/msk"
+  cluster_name               = "dr-lab-msk-usw"
+  kafka_version              = "3.7.x.kraft"
+  broker_instance_type       = var.msk_instance_type
+  number_of_broker_nodes     = var.msk_broker_count
+  subnet_ids                 = module.usw_center_vpc.data_subnet_ids
+  vpc_id                     = module.usw_center_vpc.vpc_id
+  allowed_security_group_ids = [aws_security_group.sg_msk_connect_usw.id, aws_security_group.sg_msk_usw.id]
+  tags                       = { VPC = "us-w-center", Component = "data" }
+}
+
+module "msk_use" {
+  source                     = "./modules/msk"
+  cluster_name               = "dr-lab-msk-use"
+  kafka_version              = "3.7.x.kraft"
+  broker_instance_type       = var.msk_instance_type
+  number_of_broker_nodes     = var.msk_broker_count
+  subnet_ids                 = module.use_center_vpc.data_subnet_ids
+  vpc_id                     = module.use_center_vpc.vpc_id
+  allowed_security_group_ids = [aws_security_group.sg_msk_connect_use.id, aws_security_group.sg_msk_use.id]
+  tags                       = { VPC = "us-e-center", Component = "data" }
+  providers = {
+    aws = aws.us_east_1
+  }
+}

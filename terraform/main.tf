@@ -975,3 +975,140 @@ module "use_mongodb" {
     aws = aws.us_east_1
   }
 }
+
+# =============================================================================
+# TASK 17: MSK Replicator (US-W -> US-E)
+# =============================================================================
+
+module "msk_replicator" {
+  source                    = "./modules/msk-replicator"
+  replicator_name           = "dr-lab-usw-to-use"
+  source_msk_arn            = module.msk_usw.cluster_arn
+  target_msk_arn            = module.msk_use.cluster_arn
+  source_subnet_ids         = module.usw_center_vpc.data_subnet_ids
+  target_subnet_ids         = module.use_center_vpc.data_subnet_ids
+  source_security_group_ids = [module.msk_usw.security_group_id]
+  target_security_group_ids = [module.msk_use.security_group_id]
+  tags                      = { Component = "replication" }
+}
+
+# =============================================================================
+# TASK 18: MSK Connect - Sink Connectors
+# =============================================================================
+
+# S3 bucket for connector plugin JARs (shared across all connectors)
+resource "aws_s3_bucket" "connector_plugins" {
+  bucket = "dr-lab-connector-plugins-${data.aws_caller_identity.current.account_id}"
+  tags   = { Component = "data" }
+}
+
+resource "aws_s3_bucket_versioning" "connector_plugins" {
+  bucket = aws_s3_bucket.connector_plugins.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# JDBC Sink Connector for US-W (MSK -> Aurora DSQL)
+module "msk_connect_jdbc_usw" {
+  source                = "./modules/msk-connect"
+  connector_name        = "dr-lab-jdbc-sink-usw"
+  connector_class       = "io.confluent.connect.jdbc.JdbcSinkConnector"
+  msk_cluster_arn       = module.msk_usw.cluster_arn
+  msk_bootstrap_servers = module.msk_usw.bootstrap_brokers_iam
+  subnet_ids            = module.usw_center_vpc.data_subnet_ids
+  security_group_ids    = [aws_security_group.sg_msk_connect_usw.id]
+  plugin_s3_bucket      = aws_s3_bucket.connector_plugins.id
+  plugin_s3_key         = "plugins/jdbc-sink-connector.zip"
+  worker_count          = 1
+  connector_configuration = {
+    "tasks.max"                      = "2"
+    "topics"                         = "source.public.orders,source.public.customers"
+    "connection.url"                 = "jdbc:postgresql://${module.aurora_dsql.primary_identifier}.dsql.${var.primary_region}.on.aws:5432/postgres"
+    "insert.mode"                    = "upsert"
+    "pk.mode"                        = "record_key"
+    "auto.create"                    = "true"
+    "auto.evolve"                    = "true"
+    "key.converter"                  = "org.apache.kafka.connect.json.JsonConverter"
+    "value.converter"                = "org.apache.kafka.connect.json.JsonConverter"
+    "key.converter.schemas.enable"   = "false"
+    "value.converter.schemas.enable" = "false"
+  }
+  tags = { VPC = "us-w-center", Component = "data" }
+}
+
+# MongoDB Sink Connector for US-W (MSK -> MongoDB EC2)
+module "msk_connect_mongo_usw" {
+  source                = "./modules/msk-connect"
+  connector_name        = "dr-lab-mongo-sink-usw"
+  connector_class       = "com.mongodb.kafka.connect.MongoSinkConnector"
+  msk_cluster_arn       = module.msk_usw.cluster_arn
+  msk_bootstrap_servers = module.msk_usw.bootstrap_brokers_iam
+  subnet_ids            = module.usw_center_vpc.data_subnet_ids
+  security_group_ids    = [aws_security_group.sg_msk_connect_usw.id]
+  plugin_s3_bucket      = aws_s3_bucket.connector_plugins.id
+  plugin_s3_key         = "plugins/mongodb-sink-connector.zip"
+  worker_count          = 1
+  connector_configuration = {
+    "tasks.max"                      = "2"
+    "topics"                         = "source.inventory.products"
+    "connection.uri"                 = "mongodb://${module.usw_mongodb.private_ips["mongodb"]}:27017"
+    "database"                       = "inventory"
+    "key.converter"                  = "org.apache.kafka.connect.json.JsonConverter"
+    "value.converter"                = "org.apache.kafka.connect.json.JsonConverter"
+    "key.converter.schemas.enable"   = "false"
+    "value.converter.schemas.enable" = "false"
+  }
+  tags = { VPC = "us-w-center", Component = "data" }
+}
+
+# MongoDB Sink Connector for US-E (MSK -> MongoDB EC2)
+module "msk_connect_mongo_use" {
+  source                = "./modules/msk-connect"
+  connector_name        = "dr-lab-mongo-sink-use"
+  connector_class       = "com.mongodb.kafka.connect.MongoSinkConnector"
+  msk_cluster_arn       = module.msk_use.cluster_arn
+  msk_bootstrap_servers = module.msk_use.bootstrap_brokers_iam
+  subnet_ids            = module.use_center_vpc.data_subnet_ids
+  security_group_ids    = [aws_security_group.sg_msk_connect_use.id]
+  plugin_s3_bucket      = aws_s3_bucket.connector_plugins.id
+  plugin_s3_key         = "plugins/mongodb-sink-connector.zip"
+  worker_count          = 1
+  connector_configuration = {
+    "tasks.max"                      = "2"
+    "topics"                         = "source.inventory.products"
+    "connection.uri"                 = "mongodb://${module.use_mongodb.private_ips["mongodb"]}:27017"
+    "database"                       = "inventory"
+    "key.converter"                  = "org.apache.kafka.connect.json.JsonConverter"
+    "value.converter"                = "org.apache.kafka.connect.json.JsonConverter"
+    "key.converter.schemas.enable"   = "false"
+    "value.converter.schemas.enable" = "false"
+  }
+  tags = { VPC = "us-e-center", Component = "data" }
+  providers = {
+    aws = aws.us_east_1
+  }
+}
+
+# =============================================================================
+# TASK 19: Monitoring (CloudWatch Alarms + SNS)
+# =============================================================================
+
+module "monitoring_usw" {
+  source           = "./modules/monitoring"
+  region           = var.primary_region
+  msk_cluster_name = "dr-lab-msk-usw"
+  sns_email        = ""
+  tags             = { VPC = "us-w-center", Component = "monitoring" }
+}
+
+module "monitoring_use" {
+  source           = "./modules/monitoring"
+  region           = var.dr_region
+  msk_cluster_name = "dr-lab-msk-use"
+  sns_email        = ""
+  tags             = { VPC = "us-e-center", Component = "monitoring" }
+  providers = {
+    aws = aws.us_east_1
+  }
+}

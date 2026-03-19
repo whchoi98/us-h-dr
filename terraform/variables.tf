@@ -202,3 +202,12 @@ variable "vscode_password" {
   sensitive   = true
   default     = ""
 }
+
+# -----------------------------------------------------------------------------
+# Domain Configuration
+# -----------------------------------------------------------------------------
+variable "domain_name" {
+  description = "Domain name for Route 53 failover (leave empty to skip)"
+  type        = string
+  default     = ""
+}

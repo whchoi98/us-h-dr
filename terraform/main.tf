@@ -385,3 +385,494 @@ module "onprem_vscode" {
   vpc_name              = "Onprem"
   tags                  = { VPC = "onprem", Component = "vscode" }
 }
+
+# =============================================================================
+# TASK 12: OnPrem Data Layer - Security Groups
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# OnPrem Security Groups
+# -----------------------------------------------------------------------------
+
+# Debezium SG (created early because other SGs reference it)
+resource "aws_security_group" "sg_debezium" {
+  name        = "onprem-debezium-sg"
+  description = "Security group for Debezium Kafka Connect"
+  vpc_id      = module.onprem_vpc.vpc_id
+
+  ingress {
+    description     = "Kafka Connect REST API from VSCode"
+    from_port       = 8083
+    to_port         = 8083
+    protocol        = "tcp"
+    security_groups = [module.onprem_vscode.security_group_id]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "onprem", Component = "data", Name = "onprem-debezium-sg" }
+}
+
+# MirrorMaker 2 SG (outbound only)
+resource "aws_security_group" "sg_mm2" {
+  name        = "onprem-mm2-sg"
+  description = "Security group for MirrorMaker 2"
+  vpc_id      = module.onprem_vpc.vpc_id
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "onprem", Component = "data", Name = "onprem-mm2-sg" }
+}
+
+# PostgreSQL SG
+resource "aws_security_group" "sg_postgresql" {
+  name        = "onprem-postgresql-sg"
+  description = "Security group for PostgreSQL"
+  vpc_id      = module.onprem_vpc.vpc_id
+
+  ingress {
+    description     = "PostgreSQL from Debezium"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.sg_debezium.id]
+  }
+
+  ingress {
+    description     = "PostgreSQL from VSCode"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [module.onprem_vscode.security_group_id]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "onprem", Component = "data", Name = "onprem-postgresql-sg" }
+}
+
+# MongoDB SG (OnPrem)
+resource "aws_security_group" "sg_mongodb" {
+  name        = "onprem-mongodb-sg"
+  description = "Security group for MongoDB"
+  vpc_id      = module.onprem_vpc.vpc_id
+
+  ingress {
+    description     = "MongoDB from Debezium"
+    from_port       = 27017
+    to_port         = 27017
+    protocol        = "tcp"
+    security_groups = [aws_security_group.sg_debezium.id]
+  }
+
+  ingress {
+    description     = "MongoDB from VSCode"
+    from_port       = 27017
+    to_port         = 27017
+    protocol        = "tcp"
+    security_groups = [module.onprem_vscode.security_group_id]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "onprem", Component = "data", Name = "onprem-mongodb-sg" }
+}
+
+# Kafka SG (OnPrem)
+resource "aws_security_group" "sg_kafka" {
+  name        = "onprem-kafka-sg"
+  description = "Security group for Apache Kafka brokers"
+  vpc_id      = module.onprem_vpc.vpc_id
+
+  ingress {
+    description     = "Kafka from Debezium"
+    from_port       = 9092
+    to_port         = 9092
+    protocol        = "tcp"
+    security_groups = [aws_security_group.sg_debezium.id]
+  }
+
+  ingress {
+    description = "Kafka from self (inter-broker)"
+    from_port   = 9092
+    to_port     = 9093
+    protocol    = "tcp"
+    self        = true
+  }
+
+  ingress {
+    description     = "Kafka from MM2"
+    from_port       = 9092
+    to_port         = 9093
+    protocol        = "tcp"
+    security_groups = [aws_security_group.sg_mm2.id]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "onprem", Component = "data", Name = "onprem-kafka-sg" }
+}
+
+# -----------------------------------------------------------------------------
+# US-W Security Groups
+# -----------------------------------------------------------------------------
+
+# MSK Connect SG (US-W) - outbound only
+resource "aws_security_group" "sg_msk_connect_usw" {
+  name        = "usw-msk-connect-sg"
+  description = "Security group for MSK Connect in US-W"
+  vpc_id      = module.usw_center_vpc.vpc_id
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "us-w-center", Component = "data", Name = "usw-msk-connect-sg" }
+}
+
+# MSK SG (US-W)
+resource "aws_security_group" "sg_msk_usw" {
+  name        = "usw-msk-sg"
+  description = "Security group for MSK in US-W"
+  vpc_id      = module.usw_center_vpc.vpc_id
+
+  ingress {
+    description     = "Kafka TLS from MM2 via TGW"
+    from_port       = 9094
+    to_port         = 9094
+    protocol        = "tcp"
+    security_groups = [aws_security_group.sg_msk_connect_usw.id]
+  }
+
+  ingress {
+    description = "Kafka TLS from OnPrem MM2 via TGW"
+    from_port   = 9094
+    to_port     = 9094
+    protocol    = "tcp"
+    cidr_blocks = [var.onprem_vpc_cidr]
+  }
+
+  ingress {
+    description     = "Kafka IAM auth from MSK Connect"
+    from_port       = 9098
+    to_port         = 9098
+    protocol        = "tcp"
+    security_groups = [aws_security_group.sg_msk_connect_usw.id]
+  }
+
+  ingress {
+    description = "Kafka IAM auth from OnPrem MM2 via TGW"
+    from_port   = 9098
+    to_port     = 9098
+    protocol    = "tcp"
+    cidr_blocks = [var.onprem_vpc_cidr]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "us-w-center", Component = "data", Name = "usw-msk-sg" }
+}
+
+# DSQL Endpoint SG (US-W)
+resource "aws_security_group" "sg_dsql_endpoint_usw" {
+  name        = "usw-dsql-endpoint-sg"
+  description = "Security group for DSQL VPC endpoint in US-W"
+  vpc_id      = module.usw_center_vpc.vpc_id
+
+  ingress {
+    description     = "HTTPS from MSK Connect"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.sg_msk_connect_usw.id]
+  }
+
+  ingress {
+    description     = "HTTPS from EKS"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [module.usw_eks.eks_node_security_group_id]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "us-w-center", Component = "data", Name = "usw-dsql-endpoint-sg" }
+}
+
+# MongoDB SG (US-W)
+resource "aws_security_group" "sg_mongodb_usw" {
+  name        = "usw-mongodb-sg"
+  description = "Security group for MongoDB in US-W"
+  vpc_id      = module.usw_center_vpc.vpc_id
+
+  ingress {
+    description     = "MongoDB from MSK Connect"
+    from_port       = 27017
+    to_port         = 27017
+    protocol        = "tcp"
+    security_groups = [aws_security_group.sg_msk_connect_usw.id]
+  }
+
+  ingress {
+    description     = "MongoDB from EKS"
+    from_port       = 27017
+    to_port         = 27017
+    protocol        = "tcp"
+    security_groups = [module.usw_eks.eks_node_security_group_id]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "us-w-center", Component = "data", Name = "usw-mongodb-sg" }
+}
+
+# -----------------------------------------------------------------------------
+# US-E Security Groups
+# -----------------------------------------------------------------------------
+
+# MSK Connect SG (US-E) - outbound only
+resource "aws_security_group" "sg_msk_connect_use" {
+  name        = "use-msk-connect-sg"
+  description = "Security group for MSK Connect in US-E"
+  vpc_id      = module.use_center_vpc.vpc_id
+  provider    = aws.us_east_1
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "us-e-center", Component = "data", Name = "use-msk-connect-sg" }
+}
+
+# MSK SG (US-E)
+resource "aws_security_group" "sg_msk_use" {
+  name        = "use-msk-sg"
+  description = "Security group for MSK in US-E"
+  vpc_id      = module.use_center_vpc.vpc_id
+  provider    = aws.us_east_1
+
+  ingress {
+    description     = "Kafka TLS from MSK Connect"
+    from_port       = 9094
+    to_port         = 9094
+    protocol        = "tcp"
+    security_groups = [aws_security_group.sg_msk_connect_use.id]
+  }
+
+  ingress {
+    description = "Kafka TLS from OnPrem MM2 via TGW"
+    from_port   = 9094
+    to_port     = 9094
+    protocol    = "tcp"
+    cidr_blocks = [var.onprem_vpc_cidr]
+  }
+
+  ingress {
+    description     = "Kafka IAM auth from MSK Connect"
+    from_port       = 9098
+    to_port         = 9098
+    protocol        = "tcp"
+    security_groups = [aws_security_group.sg_msk_connect_use.id]
+  }
+
+  ingress {
+    description = "Kafka IAM auth from OnPrem MM2 via TGW"
+    from_port   = 9098
+    to_port     = 9098
+    protocol    = "tcp"
+    cidr_blocks = [var.onprem_vpc_cidr]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "us-e-center", Component = "data", Name = "use-msk-sg" }
+}
+
+# DSQL Endpoint SG (US-E)
+resource "aws_security_group" "sg_dsql_endpoint_use" {
+  name        = "use-dsql-endpoint-sg"
+  description = "Security group for DSQL VPC endpoint in US-E"
+  vpc_id      = module.use_center_vpc.vpc_id
+  provider    = aws.us_east_1
+
+  ingress {
+    description     = "HTTPS from MSK Connect"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.sg_msk_connect_use.id]
+  }
+
+  ingress {
+    description     = "HTTPS from EKS"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [module.use_eks.eks_node_security_group_id]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "us-e-center", Component = "data", Name = "use-dsql-endpoint-sg" }
+}
+
+# MongoDB SG (US-E)
+resource "aws_security_group" "sg_mongodb_use" {
+  name        = "use-mongodb-sg"
+  description = "Security group for MongoDB in US-E"
+  vpc_id      = module.use_center_vpc.vpc_id
+  provider    = aws.us_east_1
+
+  ingress {
+    description     = "MongoDB from MSK Connect"
+    from_port       = 27017
+    to_port         = 27017
+    protocol        = "tcp"
+    security_groups = [aws_security_group.sg_msk_connect_use.id]
+  }
+
+  ingress {
+    description     = "MongoDB from EKS"
+    from_port       = 27017
+    to_port         = 27017
+    protocol        = "tcp"
+    security_groups = [module.use_eks.eks_node_security_group_id]
+  }
+
+  egress {
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = { VPC = "us-e-center", Component = "data", Name = "use-mongodb-sg" }
+}
+
+# =============================================================================
+# TASK 12: OnPrem Data Layer - EC2 Instances
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# OnPrem EC2 Database Instances (PostgreSQL, MongoDB, Kafka)
+# -----------------------------------------------------------------------------
+
+module "onprem_databases" {
+  source   = "./modules/ec2-database"
+  vpc_name = "Onprem"
+  instances = {
+    postgresql = {
+      instance_type  = var.db_instance_type
+      subnet_id      = module.onprem_vpc.data_subnet_ids[0]
+      user_data_file = "user-data/postgresql.sh"
+      sg_ids         = [aws_security_group.sg_postgresql.id]
+      name           = "onprem-postgresql"
+    }
+    mongodb = {
+      instance_type  = var.db_instance_type
+      subnet_id      = module.onprem_vpc.data_subnet_ids[1]
+      user_data_file = "user-data/mongodb.sh"
+      sg_ids         = [aws_security_group.sg_mongodb.id]
+      name           = "onprem-mongodb"
+    }
+    kafka-0 = {
+      instance_type  = var.kafka_instance_type
+      subnet_id      = module.onprem_vpc.data_subnet_ids[0]
+      user_data_file = "user-data/kafka.sh"
+      sg_ids         = [aws_security_group.sg_kafka.id]
+      name           = "onprem-kafka-0"
+    }
+    kafka-1 = {
+      instance_type  = var.kafka_instance_type
+      subnet_id      = module.onprem_vpc.data_subnet_ids[0]
+      user_data_file = "user-data/kafka.sh"
+      sg_ids         = [aws_security_group.sg_kafka.id]
+      name           = "onprem-kafka-1"
+    }
+    kafka-2 = {
+      instance_type  = var.kafka_instance_type
+      subnet_id      = module.onprem_vpc.data_subnet_ids[1]
+      user_data_file = "user-data/kafka.sh"
+      sg_ids         = [aws_security_group.sg_kafka.id]
+      name           = "onprem-kafka-2"
+    }
+    kafka-3 = {
+      instance_type  = var.kafka_instance_type
+      subnet_id      = module.onprem_vpc.data_subnet_ids[1]
+      user_data_file = "user-data/kafka.sh"
+      sg_ids         = [aws_security_group.sg_kafka.id]
+      name           = "onprem-kafka-3"
+    }
+  }
+  tags = { VPC = "onprem", Component = "data" }
+}

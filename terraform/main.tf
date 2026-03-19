@@ -876,3 +876,19 @@ module "onprem_databases" {
   }
   tags = { VPC = "onprem", Component = "data" }
 }
+
+# =============================================================================
+# TASK 13: Debezium Kafka Connect
+# =============================================================================
+
+module "onprem_debezium" {
+  source        = "./modules/debezium"
+  instance_type = "m7g.large"
+  subnet_id     = module.onprem_vpc.data_subnet_ids[0]
+  vpc_id        = module.onprem_vpc.vpc_id
+  kafka_sg_id   = aws_security_group.sg_kafka.id
+  vscode_sg_id  = module.onprem_vscode.security_group_id
+  kafka_brokers = join(",", [for ip in values(module.onprem_databases.private_ips) : "${ip}:9092" if can(regex("kafka", ip)) == false])
+  vpc_name      = "Onprem"
+  tags          = { VPC = "onprem", Component = "data" }
+}

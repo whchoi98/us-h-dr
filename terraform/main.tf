@@ -923,3 +923,18 @@ module "msk_use" {
     aws = aws.us_east_1
   }
 }
+
+# =============================================================================
+# TASK 15: Aurora DSQL Multi-Region
+# =============================================================================
+
+module "aurora_dsql" {
+  source             = "./modules/aurora-dsql"
+  cluster_identifier = "dr-lab-dsql"
+  tags               = { Component = "data" }
+  providers = {
+    aws         = aws
+    aws.linked  = aws.us_east_1
+    aws.witness = aws.us_east_2
+  }
+}

@@ -269,3 +269,58 @@ module "tgw_peering" {
     aws.accepter = aws.us_east_1
   }
 }
+
+# -----------------------------------------------------------------------------
+# Caller Identity (for secret header values)
+# -----------------------------------------------------------------------------
+
+data "aws_caller_identity" "current" {}
+
+# -----------------------------------------------------------------------------
+# CloudFront + ALB Ingress
+# -----------------------------------------------------------------------------
+
+module "onprem_ingress" {
+  source              = "./modules/cloudfront-alb"
+  vpc_id              = module.onprem_vpc.vpc_id
+  vpc_name            = "Onprem"
+  public_subnet_ids   = module.onprem_vpc.public_subnet_ids
+  custom_header_value = "onprem-secret-${data.aws_caller_identity.current.account_id}"
+  tags                = { VPC = "onprem", Component = "ingress" }
+}
+
+module "usw_ingress" {
+  source              = "./modules/cloudfront-alb"
+  vpc_id              = module.usw_center_vpc.vpc_id
+  vpc_name            = "US-W-CENTER"
+  public_subnet_ids   = module.usw_center_vpc.public_subnet_ids
+  custom_header_value = "usw-secret-${data.aws_caller_identity.current.account_id}"
+  tags                = { VPC = "us-w-center", Component = "ingress" }
+}
+
+module "use_ingress" {
+  source              = "./modules/cloudfront-alb"
+  vpc_id              = module.use_center_vpc.vpc_id
+  vpc_name            = "US-E-CENTER"
+  public_subnet_ids   = module.use_center_vpc.public_subnet_ids
+  custom_header_value = "use-secret-${data.aws_caller_identity.current.account_id}"
+  tags                = { VPC = "us-e-center", Component = "ingress" }
+  providers = {
+    aws = aws.us_east_1
+  }
+}
+
+# -----------------------------------------------------------------------------
+# Route 53 Failover (conditional on domain_name)
+# -----------------------------------------------------------------------------
+
+module "route53_failover" {
+  count                       = var.domain_name != "" ? 1 : 0
+  source                      = "./modules/route53-failover"
+  domain_name                 = var.domain_name
+  primary_cloudfront_domain   = module.usw_ingress.cloudfront_domain_name
+  secondary_cloudfront_domain = module.use_ingress.cloudfront_domain_name
+  primary_alb_dns             = module.usw_ingress.alb_dns_name
+  secondary_alb_dns           = module.use_ingress.alb_dns_name
+  tags                        = { Component = "network" }
+}

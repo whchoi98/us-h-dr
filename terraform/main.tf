@@ -938,3 +938,40 @@ module "aurora_dsql" {
     aws.witness = aws.us_east_2
   }
 }
+
+# =============================================================================
+# TASK 16: MongoDB EC2 for US-W and US-E
+# =============================================================================
+
+module "usw_mongodb" {
+  source   = "./modules/ec2-database"
+  vpc_name = "US-W-CENTER"
+  instances = {
+    mongodb = {
+      instance_type  = var.db_instance_type
+      subnet_id      = module.usw_center_vpc.data_subnet_ids[0]
+      user_data_file = "user-data/mongodb.sh"
+      sg_ids         = [aws_security_group.sg_mongodb_usw.id]
+      name           = "usw-mongodb"
+    }
+  }
+  tags = { VPC = "us-w-center", Component = "data" }
+}
+
+module "use_mongodb" {
+  source   = "./modules/ec2-database"
+  vpc_name = "US-E-CENTER"
+  instances = {
+    mongodb = {
+      instance_type  = var.db_instance_type
+      subnet_id      = module.use_center_vpc.data_subnet_ids[0]
+      user_data_file = "user-data/mongodb.sh"
+      sg_ids         = [aws_security_group.sg_mongodb_use.id]
+      name           = "use-mongodb"
+    }
+  }
+  tags = { VPC = "us-e-center", Component = "data" }
+  providers = {
+    aws = aws.us_east_1
+  }
+}

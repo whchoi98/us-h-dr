@@ -324,3 +324,64 @@ module "route53_failover" {
   secondary_alb_dns           = module.use_ingress.alb_dns_name
   tags                        = { Component = "network" }
 }
+
+# -----------------------------------------------------------------------------
+# EKS Clusters
+# -----------------------------------------------------------------------------
+
+module "onprem_eks" {
+  source             = "./modules/eks"
+  cluster_name       = "onprem-eks"
+  vpc_id             = module.onprem_vpc.vpc_id
+  private_subnet_ids = module.onprem_vpc.private_subnet_ids
+  eks_version        = var.eks_version
+  node_type          = var.eks_node_type
+  node_count         = var.eks_node_count
+  region             = var.primary_region
+  availability_zones = slice(data.aws_availability_zones.usw2.names, 0, 2)
+  tags               = { VPC = "onprem", Component = "eks" }
+}
+
+module "usw_eks" {
+  source             = "./modules/eks"
+  cluster_name       = "usw-eks"
+  vpc_id             = module.usw_center_vpc.vpc_id
+  private_subnet_ids = module.usw_center_vpc.private_subnet_ids
+  eks_version        = var.eks_version
+  node_type          = var.eks_node_type
+  node_count         = var.eks_node_count
+  region             = var.primary_region
+  availability_zones = slice(data.aws_availability_zones.usw2.names, 0, 2)
+  tags               = { VPC = "us-w-center", Component = "eks" }
+}
+
+module "use_eks" {
+  source             = "./modules/eks"
+  cluster_name       = "use-eks"
+  vpc_id             = module.use_center_vpc.vpc_id
+  private_subnet_ids = module.use_center_vpc.private_subnet_ids
+  eks_version        = var.eks_version
+  node_type          = var.eks_node_type
+  node_count         = var.eks_node_count
+  region             = var.dr_region
+  availability_zones = slice(data.aws_availability_zones.use1.names, 0, 2)
+  tags               = { VPC = "us-e-center", Component = "eks" }
+  providers = {
+    aws = aws.us_east_1
+  }
+}
+
+# -----------------------------------------------------------------------------
+# VSCode Server (OnPrem VPC only)
+# -----------------------------------------------------------------------------
+
+module "onprem_vscode" {
+  source                = "./modules/vscode-server"
+  instance_type         = var.vscode_instance_type
+  vpc_id                = module.onprem_vpc.vpc_id
+  subnet_id             = module.onprem_vpc.private_subnet_ids[0]
+  alb_security_group_id = module.onprem_ingress.alb_security_group_id
+  password              = var.vscode_password
+  vpc_name              = "Onprem"
+  tags                  = { VPC = "onprem", Component = "vscode" }
+}

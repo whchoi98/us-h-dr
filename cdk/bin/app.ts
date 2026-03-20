@@ -15,6 +15,8 @@ import { DataUswStack } from '../lib/data-usw-stack';
 import { AuroraDsqlStack } from '../lib/aurora-dsql-stack';
 import { DataUseStack } from '../lib/data-use-stack';
 import { MskReplicatorStack } from '../lib/msk-replicator-stack';
+import { MonitoringStack } from '../lib/monitoring-stack';
+import { Route53FailoverStack } from '../lib/route53-failover-stack';
 
 const app = new cdk.App();
 
@@ -217,5 +219,39 @@ const mskReplicator = new MskReplicatorStack(app, 'MskReplicatorStack', {
 });
 mskReplicator.addDependency(dataUsw);
 mskReplicator.addDependency(dataUse);
+
+// ---------------------------------------------------------------------------
+// Phase 6: Monitoring Stacks
+// ---------------------------------------------------------------------------
+
+const monitoringUsw = new MonitoringStack(app, 'MonitoringUswStack', {
+  env: envWest,
+  regionLabel: 'US-W',
+  mskClusterName: 'dr-lab-usw-msk',
+  eksClusterName: 'dr-lab-us-w-eks',
+});
+monitoringUsw.addDependency(mskReplicator);
+
+const monitoringUse = new MonitoringStack(app, 'MonitoringUseStack', {
+  env: envEast,
+  regionLabel: 'US-E',
+  mskClusterName: 'dr-lab-use-msk',
+  eksClusterName: 'dr-lab-us-e-eks',
+});
+monitoringUse.addDependency(mskReplicator);
+
+// ---------------------------------------------------------------------------
+// Phase 6: Route 53 Failover
+// ---------------------------------------------------------------------------
+
+const route53Failover = new Route53FailoverStack(app, 'Route53FailoverStack', {
+  env: envWest,
+  crossRegionReferences: true,
+  primaryCloudfrontDomain: cfAlbUsw.distribution.distributionDomainName,
+  drCloudfrontDomain: cfAlbUse.distribution.distributionDomainName,
+  domainName: 'dr-lab.internal',
+});
+route53Failover.addDependency(monitoringUsw);
+route53Failover.addDependency(monitoringUse);
 
 app.synth();

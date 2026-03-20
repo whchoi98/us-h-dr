@@ -1,0 +1,18 @@
+{
+  "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
+  "connection.url": "jdbc:aws-dsql://${DSQL_ENDPOINT}:5432/postgres",
+  "topics.regex": "source\\.dbserver1\\.public\\..*",
+  "insert.mode": "upsert",
+  "pk.mode": "record_key",
+  "auto.create": "true",
+  "auto.evolve": "true",
+  "errors.retry.timeout": "300000",
+  "errors.retry.delay.max.ms": "60000",
+  "errors.tolerance": "all",
+  "errors.deadletterqueue.topic.name": "dlq-dsql-sink",
+  "errors.deadletterqueue.topic.replication.factor": "3",
+  "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "key.converter.schemas.enable": "false",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter.schemas.enable": "false"
+}

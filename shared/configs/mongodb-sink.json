@@ -1,0 +1,12 @@
+{
+  "connector.class": "com.mongodb.kafka.connect.MongoSinkConnector",
+  "connection.uri": "mongodb://${MONGO_HOST}:27017",
+  "database": "ecommerce",
+  "topics.regex": "source\\.mongo\\.ecommerce\\..*",
+  "writemodel.strategy": "com.mongodb.kafka.connect.sink.writemodel.strategy.ReplaceOneDefaultStrategy",
+  "document.id.strategy": "com.mongodb.kafka.connect.sink.processor.id.strategy.ProvidedInKeyStrategy",
+  "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "key.converter.schemas.enable": "false",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter.schemas.enable": "false"
+}

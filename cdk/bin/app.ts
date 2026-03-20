@@ -7,6 +7,7 @@ import { UseCenterVpcStack } from '../lib/use-center-vpc-stack';
 import { TgwStack } from '../lib/tgw-stack';
 import { TgwEastStack } from '../lib/tgw-east-stack';
 import { TgwPeeringStack } from '../lib/tgw-peering-stack';
+import { CloudFrontAlbStack } from '../lib/cloudfront-alb-stack';
 
 const app = new cdk.App();
 
@@ -83,7 +84,33 @@ const tgwPeering = new TgwPeeringStack(app, 'TgwPeeringStack', {
 tgwPeering.addDependency(tgwWest);
 tgwPeering.addDependency(tgwEast);
 
-// Stacks for subsequent phases will be added as they are implemented
-// See: docs/superpowers/specs/2026-03-19-multi-region-dr-infra-design.md Section 10.2
+// ---------------------------------------------------------------------------
+// Phase 2: CloudFront + ALB Stacks
+// ---------------------------------------------------------------------------
+
+const cfAlbOnprem = new CloudFrontAlbStack(app, 'CloudFrontAlbOnpremStack', {
+  env: envWest,
+  vpc: onpremVpc.drVpc.vpc,
+  publicSubnets: onpremVpc.drVpc.publicSubnets,
+  regionLabel: 'OnPrem',
+});
+cfAlbOnprem.addDependency(tgwPeering);
+
+const cfAlbUsw = new CloudFrontAlbStack(app, 'CloudFrontAlbUswStack', {
+  env: envWest,
+  vpc: uswVpc.drVpc.vpc,
+  publicSubnets: uswVpc.drVpc.publicSubnets,
+  regionLabel: 'US-W',
+});
+cfAlbUsw.addDependency(tgwPeering);
+
+const cfAlbUse = new CloudFrontAlbStack(app, 'CloudFrontAlbUseStack', {
+  env: envEast,
+  crossRegionReferences: true,
+  vpc: useVpc.drVpc.vpc,
+  publicSubnets: useVpc.drVpc.publicSubnets,
+  regionLabel: 'US-E',
+});
+cfAlbUse.addDependency(tgwPeering);
 
 app.synth();

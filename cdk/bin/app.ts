@@ -12,6 +12,7 @@ import { EksStack } from '../lib/eks-stack';
 import { VscodeServerStack } from '../lib/vscode-server-stack';
 import { DataOnpremStack } from '../lib/data-onprem-stack';
 import { DataUswStack } from '../lib/data-usw-stack';
+import { AuroraDsqlStack } from '../lib/aurora-dsql-stack';
 
 const app = new cdk.App();
 
@@ -179,5 +180,15 @@ const dataUsw = new DataUswStack(app, 'DataUswStack', {
   privateSubnets: uswVpc.drVpc.privateSubnets,
 });
 dataUsw.addDependency(eksUsw);
+
+// ---------------------------------------------------------------------------
+// Phase 4: Aurora DSQL Multi-Region
+// ---------------------------------------------------------------------------
+
+const auroraDsql = new AuroraDsqlStack(app, 'AuroraDsqlStack', {
+  env: envWest,
+  linkedRegion: Config.drRegion,
+});
+auroraDsql.addDependency(dataUsw);
 
 app.synth();

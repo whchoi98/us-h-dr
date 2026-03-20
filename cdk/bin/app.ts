@@ -11,6 +11,7 @@ import { CloudFrontAlbStack } from '../lib/cloudfront-alb-stack';
 import { EksStack } from '../lib/eks-stack';
 import { VscodeServerStack } from '../lib/vscode-server-stack';
 import { DataOnpremStack } from '../lib/data-onprem-stack';
+import { DataUswStack } from '../lib/data-usw-stack';
 
 const app = new cdk.App();
 
@@ -166,5 +167,17 @@ const dataOnprem = new DataOnpremStack(app, 'DataOnpremStack', {
   dataSubnets: onpremVpc.drVpc.dataSubnets,
 });
 dataOnprem.addDependency(eksOnprem);
+
+// ---------------------------------------------------------------------------
+// Phase 4: Data Stacks – US-W (MSK + MSK Connect)
+// ---------------------------------------------------------------------------
+
+const dataUsw = new DataUswStack(app, 'DataUswStack', {
+  env: envWest,
+  vpc: uswVpc.drVpc.vpc,
+  dataSubnets: uswVpc.drVpc.dataSubnets,
+  privateSubnets: uswVpc.drVpc.privateSubnets,
+});
+dataUsw.addDependency(eksUsw);
 
 app.synth();

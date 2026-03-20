@@ -1,0 +1,14 @@
+{
+  "name": "mongodb-source",
+  "config": {
+    "connector.class": "io.debezium.connector.mongodb.MongoDbConnector",
+    "mongodb.connection.string": "mongodb://${MONGO_HOST}:27017/?replicaSet=rs0",
+    "topic.prefix": "mongo",
+    "database.include.list": "ecommerce",
+    "collection.include.list": "ecommerce.users,ecommerce.products,ecommerce.orders,ecommerce.reviews,ecommerce.sessions",
+    "capture.mode": "change_streams_update_full",
+    "transforms": "unwrap",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.drop.tombstones": "true"
+  }
+}

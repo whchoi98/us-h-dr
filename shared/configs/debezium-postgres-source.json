@@ -1,0 +1,21 @@
+{
+  "name": "postgres-source",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "${POSTGRES_HOST}",
+    "database.port": "5432",
+    "database.user": "debezium",
+    "database.password": "${POSTGRES_PASSWORD}",
+    "database.dbname": "ecommerce",
+    "topic.prefix": "dbserver1",
+    "plugin.name": "pgoutput",
+    "slot.name": "debezium_slot",
+    "publication.name": "dbz_publication",
+    "table.include.list": "public.users,public.products,public.orders,public.order_items,public.reviews",
+    "schema.history.internal.kafka.bootstrap.servers": "${KAFKA_BROKERS}",
+    "schema.history.internal.kafka.topic": "schema-changes.ecommerce",
+    "transforms": "unwrap",
+    "transforms.unwrap.type": "io.debezium.transforms.ExtractNewRecordState",
+    "transforms.unwrap.drop.tombstones": "true"
+  }
+}

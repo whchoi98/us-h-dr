@@ -24,16 +24,11 @@ resource "aws_security_group" "alb" {
   name_prefix = "${var.vpc_name}-alb-"
   vpc_id      = var.vpc_id
 
+  # Only port 80 needed - CloudFront connects to ALB via HTTP (origin_protocol_policy = "http-only")
+  # Using both 80+443 with CloudFront prefix list exceeds SG rules limit (120+ entries × 2 rules > 60 limit)
   ingress {
     from_port       = 80
     to_port         = 80
-    protocol        = "tcp"
-    prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront.id]
-  }
-
-  ingress {
-    from_port       = 443
-    to_port         = 443
     protocol        = "tcp"
     prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront.id]
   }

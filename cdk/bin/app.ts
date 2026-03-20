@@ -8,6 +8,8 @@ import { TgwStack } from '../lib/tgw-stack';
 import { TgwEastStack } from '../lib/tgw-east-stack';
 import { TgwPeeringStack } from '../lib/tgw-peering-stack';
 import { CloudFrontAlbStack } from '../lib/cloudfront-alb-stack';
+import { EksStack } from '../lib/eks-stack';
+import { VscodeServerStack } from '../lib/vscode-server-stack';
 
 const app = new cdk.App();
 
@@ -112,5 +114,45 @@ const cfAlbUse = new CloudFrontAlbStack(app, 'CloudFrontAlbUseStack', {
   regionLabel: 'US-E',
 });
 cfAlbUse.addDependency(tgwPeering);
+
+// ---------------------------------------------------------------------------
+// Phase 3: EKS Stacks
+// ---------------------------------------------------------------------------
+
+const eksOnprem = new EksStack(app, 'EksOnpremStack', {
+  env: envWest,
+  vpc: onpremVpc.drVpc.vpc,
+  privateSubnets: onpremVpc.drVpc.privateSubnets,
+  regionLabel: 'OnPrem',
+});
+eksOnprem.addDependency(cfAlbOnprem);
+
+const eksUsw = new EksStack(app, 'EksUswStack', {
+  env: envWest,
+  vpc: uswVpc.drVpc.vpc,
+  privateSubnets: uswVpc.drVpc.privateSubnets,
+  regionLabel: 'US-W',
+});
+eksUsw.addDependency(cfAlbUsw);
+
+const eksUse = new EksStack(app, 'EksUseStack', {
+  env: envEast,
+  vpc: useVpc.drVpc.vpc,
+  privateSubnets: useVpc.drVpc.privateSubnets,
+  regionLabel: 'US-E',
+});
+eksUse.addDependency(cfAlbUse);
+
+// ---------------------------------------------------------------------------
+// Phase 3: VSCode Server (OnPrem only)
+// ---------------------------------------------------------------------------
+
+const vscodeServer = new VscodeServerStack(app, 'VscodeServerStack', {
+  env: envWest,
+  vpc: onpremVpc.drVpc.vpc,
+  privateSubnet: onpremVpc.drVpc.privateSubnets[0],
+  albSecurityGroup: cfAlbOnprem.albSecurityGroup,
+});
+vscodeServer.addDependency(eksOnprem);
 
 app.synth();

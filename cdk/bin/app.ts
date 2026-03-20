@@ -10,6 +10,7 @@ import { TgwPeeringStack } from '../lib/tgw-peering-stack';
 import { CloudFrontAlbStack } from '../lib/cloudfront-alb-stack';
 import { EksStack } from '../lib/eks-stack';
 import { VscodeServerStack } from '../lib/vscode-server-stack';
+import { DataOnpremStack } from '../lib/data-onprem-stack';
 
 const app = new cdk.App();
 
@@ -154,5 +155,16 @@ const vscodeServer = new VscodeServerStack(app, 'VscodeServerStack', {
   albSecurityGroup: cfAlbOnprem.albSecurityGroup,
 });
 vscodeServer.addDependency(eksOnprem);
+
+// ---------------------------------------------------------------------------
+// Phase 4: Data Stacks – OnPrem
+// ---------------------------------------------------------------------------
+
+const dataOnprem = new DataOnpremStack(app, 'DataOnpremStack', {
+  env: envWest,
+  vpc: onpremVpc.drVpc.vpc,
+  dataSubnets: onpremVpc.drVpc.dataSubnets,
+});
+dataOnprem.addDependency(eksOnprem);
 
 app.synth();

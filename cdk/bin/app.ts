@@ -13,6 +13,8 @@ import { VscodeServerStack } from '../lib/vscode-server-stack';
 import { DataOnpremStack } from '../lib/data-onprem-stack';
 import { DataUswStack } from '../lib/data-usw-stack';
 import { AuroraDsqlStack } from '../lib/aurora-dsql-stack';
+import { DataUseStack } from '../lib/data-use-stack';
+import { MskReplicatorStack } from '../lib/msk-replicator-stack';
 
 const app = new cdk.App();
 
@@ -190,5 +192,30 @@ const auroraDsql = new AuroraDsqlStack(app, 'AuroraDsqlStack', {
   linkedRegion: Config.drRegion,
 });
 auroraDsql.addDependency(dataUsw);
+
+// ---------------------------------------------------------------------------
+// Phase 4: Data Stacks – US-E (MSK + MSK Connect)
+// ---------------------------------------------------------------------------
+
+const dataUse = new DataUseStack(app, 'DataUseStack', {
+  env: envEast,
+  vpc: useVpc.drVpc.vpc,
+  dataSubnets: useVpc.drVpc.dataSubnets,
+  privateSubnets: useVpc.drVpc.privateSubnets,
+});
+dataUse.addDependency(eksUse);
+
+// ---------------------------------------------------------------------------
+// Phase 5: Replication – MSK Replicator (US-W -> US-E)
+// ---------------------------------------------------------------------------
+
+const mskReplicator = new MskReplicatorStack(app, 'MskReplicatorStack', {
+  env: envWest,
+  crossRegionReferences: true,
+  sourceMskClusterArn: dataUsw.mskClusterArn,
+  targetMskClusterArn: dataUse.mskClusterArn,
+});
+mskReplicator.addDependency(dataUsw);
+mskReplicator.addDependency(dataUse);
 
 app.synth();

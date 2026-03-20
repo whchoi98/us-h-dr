@@ -1,0 +1,36 @@
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/.terraform.lock.hcl
+terraform/crash.log
+terraform/*.tfplan
+
+# CDK
+cdk/node_modules/
+cdk/dist/
+cdk/cdk.out/
+cdk/cdk.context.json
+cdk/.cdk.staging/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Environment
+.env
+.env.local
+*.pem
+*.key

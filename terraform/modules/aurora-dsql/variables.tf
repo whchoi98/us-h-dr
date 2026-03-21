@@ -9,6 +9,12 @@ variable "witness_region" {
   default     = "us-east-2"
 }
 
+variable "deletion_protection" {
+  description = "Enable deletion protection for DSQL clusters"
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

@@ -20,7 +20,7 @@ terraform {
 }
 
 resource "aws_dsql_cluster" "primary" {
-  deletion_protection_enabled = false
+  deletion_protection_enabled = var.deletion_protection
 
   multi_region_properties {
     witness_region = var.witness_region
@@ -33,7 +33,7 @@ resource "aws_dsql_cluster" "primary" {
 
 resource "aws_dsql_cluster" "linked" {
   provider                    = aws.linked
-  deletion_protection_enabled = false
+  deletion_protection_enabled = var.deletion_protection
 
   multi_region_properties {
     witness_region = var.witness_region

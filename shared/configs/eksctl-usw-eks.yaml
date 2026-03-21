@@ -23,6 +23,16 @@ managedNodeGroups:
     amiFamily: AmazonLinux2023
     iam:
       instanceRoleARN: "${USW_EKS_NODE_ROLE_ARN}"
+cloudWatch:
+  clusterLogging:
+    enableTypes:
+      - api
+      - audit
+      - authenticator
+      - controllerManager
+      - scheduler
+secretsEncryption:
+  keyARN: "${USW_EKS_SECRETS_KEY_ARN}"
 addons:
   - name: vpc-cni
   - name: coredns

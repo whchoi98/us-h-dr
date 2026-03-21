@@ -1,6 +1,6 @@
 {
   "connector.class": "com.mongodb.kafka.connect.MongoSinkConnector",
-  "connection.uri": "mongodb://${MONGO_HOST}:27017",
+  "connection.uri": "mongodb://${MONGO_USER}:${MONGO_PASSWORD}@${MONGO_HOST}:27017/?authSource=admin",
   "database": "ecommerce",
   "topics.regex": "source\\.mongo\\.ecommerce\\..*",
   "writemodel.strategy": "com.mongodb.kafka.connect.sink.writemodel.strategy.ReplaceOneDefaultStrategy",

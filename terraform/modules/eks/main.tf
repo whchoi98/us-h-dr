@@ -117,22 +117,42 @@ resource "aws_security_group" "eks_node" {
 }
 
 # -----------------------------------------------------------------------------
+# KMS Key for EKS Secrets Encryption
+# -----------------------------------------------------------------------------
+
+resource "aws_kms_key" "eks_secrets" {
+  description             = "KMS key for EKS secrets encryption - ${var.cluster_name}"
+  deletion_window_in_days = 7
+  enable_key_rotation     = true
+
+  tags = merge(var.tags, {
+    Name = "${var.cluster_name}-eks-secrets-key"
+  })
+}
+
+resource "aws_kms_alias" "eks_secrets" {
+  name          = "alias/${var.cluster_name}-eks-secrets"
+  target_key_id = aws_kms_key.eks_secrets.key_id
+}
+
+# -----------------------------------------------------------------------------
 # eksctl Configuration Template
 # -----------------------------------------------------------------------------
 
 resource "local_file" "eksctl_config" {
   content = templatefile("${path.module}/eksctl-config.yaml.tpl", {
-    cluster_name     = var.cluster_name
-    region           = var.region
-    eks_version      = var.eks_version
-    vpc_id           = var.vpc_id
-    private_subnet_a = var.private_subnet_ids[0]
-    private_subnet_b = var.private_subnet_ids[1]
-    az_a             = var.availability_zones[0]
-    az_b             = var.availability_zones[1]
-    node_type        = var.node_type
-    node_count       = var.node_count
-    node_role_arn    = aws_iam_role.eks_node.arn
+    cluster_name               = var.cluster_name
+    region                     = var.region
+    eks_version                = var.eks_version
+    vpc_id                     = var.vpc_id
+    private_subnet_a           = var.private_subnet_ids[0]
+    private_subnet_b           = var.private_subnet_ids[1]
+    az_a                       = var.availability_zones[0]
+    az_b                       = var.availability_zones[1]
+    node_type                  = var.node_type
+    node_count                 = var.node_count
+    node_role_arn              = aws_iam_role.eks_node.arn
+    secrets_encryption_key_arn = aws_kms_key.eks_secrets.arn
   })
   filename = "${path.root}/../shared/configs/eksctl-${var.cluster_name}.yaml"
 }

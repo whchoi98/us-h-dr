@@ -3,8 +3,8 @@ set -e
 echo "Checking prerequisites..."
 
 for cmd in aws eksctl kubectl helm jq python3 docker; do
-  if command -v $cmd &>/dev/null; then
-    echo "  [OK] $cmd: $(command -v $cmd)"
+  if command -v "$cmd" &>/dev/null; then
+    echo "  [OK] $cmd: $(command -v "$cmd")"
   else
     echo "  [MISSING] $cmd"
     exit 1

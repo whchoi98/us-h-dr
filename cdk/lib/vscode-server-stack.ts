@@ -44,6 +44,15 @@ export class VscodeServerStack extends cdk.Stack {
       resources: ['*'],
     }));
 
+    // Permission to read VSCode password from SSM Parameter Store
+    role.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['ssm:GetParameter'],
+      resources: [
+        cdk.Arn.format({ service: 'ssm', resource: 'parameter', resourceName: 'dr-lab/vscode-password' }, this),
+      ],
+    }));
+
     // -------------------------------------------------------------------------
     // Security Group
     // -------------------------------------------------------------------------
@@ -93,10 +102,11 @@ export class VscodeServerStack extends cdk.Stack {
       '# Install code-server',
       'curl -fsSL https://code-server.dev/install.sh | sh',
       'mkdir -p /home/ec2-user/.config/code-server',
+      `VSCODE_PASSWORD=$(aws ssm get-parameter --name "/dr-lab/vscode-password" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "changeme-dr-lab")`,
       'cat > /home/ec2-user/.config/code-server/config.yaml <<CSCFG',
       'bind-addr: 0.0.0.0:8888',
       'auth: password',
-      'password: changeme-dr-lab',
+      'password: $VSCODE_PASSWORD',
       'cert: false',
       'CSCFG',
       'chown -R ec2-user:ec2-user /home/ec2-user/.config',

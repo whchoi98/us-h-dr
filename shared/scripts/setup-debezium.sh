@@ -14,21 +14,23 @@ PG_CONFIG=$(cat "$CONFIG_DIR/debezium-postgres-source.json" | \
   sed "s|\${POSTGRES_HOST}|$POSTGRES_HOST|g" | \
   sed "s|\${POSTGRES_PASSWORD}|$POSTGRES_PASSWORD|g" | \
   sed "s|\${KAFKA_BROKERS}|$KAFKA_BROKERS|g")
-curl -s -X POST "http://$DEBEZIUM_HOST:8083/connectors" \
+curl -sf -X POST "http://$DEBEZIUM_HOST:8083/connectors" \
   -H "Content-Type: application/json" \
   -d "$PG_CONFIG" | jq .
+echo "PostgreSQL connector registered."
 
 echo ""
 echo "=== Registering Debezium MongoDB Source Connector ==="
 MONGO_CONFIG=$(cat "$CONFIG_DIR/debezium-mongodb-source.json" | \
   sed "s|\${MONGO_HOST}|$MONGO_HOST|g")
-curl -s -X POST "http://$DEBEZIUM_HOST:8083/connectors" \
+curl -sf -X POST "http://$DEBEZIUM_HOST:8083/connectors" \
   -H "Content-Type: application/json" \
   -d "$MONGO_CONFIG" | jq .
+echo "MongoDB connector registered."
 
 echo ""
 echo "=== Checking connector status ==="
 sleep 5
-curl -s "http://$DEBEZIUM_HOST:8083/connectors/postgres-source/status" | jq .
-curl -s "http://$DEBEZIUM_HOST:8083/connectors/mongodb-source/status" | jq .
+curl -sf "http://$DEBEZIUM_HOST:8083/connectors/postgres-source/status" | jq .
+curl -sf "http://$DEBEZIUM_HOST:8083/connectors/mongodb-source/status" | jq .
 echo "Done."

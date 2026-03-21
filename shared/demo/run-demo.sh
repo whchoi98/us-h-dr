@@ -9,7 +9,7 @@
 #       → Aurora DSQL Multi-Region → DSQL (US-E)
 #
 # Usage: ./run-demo.sh [step]
-#   Steps: all | deploy | seed | verify | pipeline | dr-test | cleanup
+#   Steps: all | deploy | setup | seed | pipeline | verify | dr-test | cleanup
 # =============================================================================
 set -euo pipefail
 
@@ -99,11 +99,191 @@ do_deploy() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 2: Seed Demo Data (CloudFront → ALB → EKS → DB)
+# Step 2: Setup CDC Pipeline (Debezium + MirrorMaker2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+do_setup() {
+  banner "STEP 2: Setup CDC Pipeline"
+  local debezium="${ONPREM_DEBEZIUM_HOST}"
+  local pg_host="${ONPREM_PG_HOST}"
+  local mongo_host="${ONPREM_MONGO_HOST}"
+  local kafka="${ONPREM_KAFKA_BROKERS}"
+  local shared_dir="${SCRIPT_DIR}/../"
+
+  # --- 2.1 PostgreSQL logical replication ---
+  step "2.1" "Configure PostgreSQL for logical replication"
+  info "Ensuring wal_level=logical and creating replication user permissions..."
+
+  PGPASSWORD="${POSTGRES_PASSWORD:-}" psql -h "$pg_host" -U "${PG_USER:-debezium}" -d "${PG_DB:-ecommerce}" -c "
+    -- Ensure tables exist for Debezium to capture
+    CREATE TABLE IF NOT EXISTS customers (
+      id SERIAL PRIMARY KEY, name VARCHAR(200), email VARCHAR(200),
+      city VARCHAR(100), batch_id VARCHAR(50),
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+    CREATE TABLE IF NOT EXISTS orders (
+      id SERIAL PRIMARY KEY, customer_id INTEGER REFERENCES customers(id),
+      product VARCHAR(200), amount DECIMAL(10,2), status VARCHAR(30),
+      batch_id VARCHAR(50), created_at TIMESTAMP DEFAULT NOW()
+    );
+  " 2>/dev/null && ok "Demo tables created in PostgreSQL" || warn "Table creation skipped (may already exist)"
+
+  # Check if publication exists, create if not
+  PGPASSWORD="${POSTGRES_PASSWORD:-}" psql -h "$pg_host" -U "${PG_USER:-debezium}" -d "${PG_DB:-ecommerce}" -c "
+    DO \$\$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'dbz_publication') THEN
+        CREATE PUBLICATION dbz_publication FOR ALL TABLES;
+      ELSE
+        -- Add demo tables to existing publication
+        ALTER PUBLICATION dbz_publication ADD TABLE customers, orders;
+      END IF;
+    EXCEPTION WHEN duplicate_object THEN
+      NULL;
+    END \$\$;
+  " 2>/dev/null && ok "Publication configured" || warn "Publication setup skipped"
+
+  # --- 2.2 Check Debezium Connect availability ---
+  step "2.2" "Check Debezium Kafka Connect availability"
+  local retries=0
+  while [ $retries -lt 12 ]; do
+    if curl -sf "http://${debezium}:8083/" >/dev/null 2>&1; then
+      ok "Debezium Connect is reachable at ${debezium}:8083"
+      break
+    fi
+    retries=$((retries + 1))
+    echo -ne "  ${DIM}Waiting for Debezium Connect (${retries}/12)...${NC}\r"
+    sleep 5
+  done
+  if [ $retries -eq 12 ]; then
+    fail "Debezium Connect not reachable after 60s"
+    warn "Start Debezium manually or check EC2 instance status"
+    return 1
+  fi
+
+  # --- 2.3 Register Debezium connectors ---
+  step "2.3" "Register Debezium CDC connectors"
+
+  # Check if connectors already exist
+  EXISTING=$(curl -sf "http://${debezium}:8083/connectors" 2>/dev/null || echo "[]")
+
+  # PostgreSQL source connector (captures demo tables)
+  if echo "$EXISTING" | grep -q "demo-postgres-source"; then
+    ok "demo-postgres-source: already registered"
+  else
+    info "Registering PostgreSQL CDC connector..."
+    curl -sf -X POST "http://${debezium}:8083/connectors" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"name\": \"demo-postgres-source\",
+        \"config\": {
+          \"connector.class\": \"io.debezium.connector.postgresql.PostgresConnector\",
+          \"database.hostname\": \"${pg_host}\",
+          \"database.port\": \"5432\",
+          \"database.user\": \"${PG_USER:-debezium}\",
+          \"database.password\": \"${POSTGRES_PASSWORD:-}\",
+          \"database.dbname\": \"${PG_DB:-ecommerce}\",
+          \"topic.prefix\": \"source\",
+          \"plugin.name\": \"pgoutput\",
+          \"slot.name\": \"demo_slot\",
+          \"publication.name\": \"dbz_publication\",
+          \"table.include.list\": \"public.customers,public.orders\",
+          \"schema.history.internal.kafka.bootstrap.servers\": \"${kafka}\",
+          \"schema.history.internal.kafka.topic\": \"schema-changes.demo\",
+          \"snapshot.mode\": \"initial\",
+          \"transforms\": \"unwrap\",
+          \"transforms.unwrap.type\": \"io.debezium.transforms.ExtractNewRecordState\",
+          \"transforms.unwrap.drop.tombstones\": \"true\"
+        }
+      }" | python3 -m json.tool 2>/dev/null && ok "demo-postgres-source: registered" || fail "PostgreSQL connector registration failed"
+  fi
+
+  # MongoDB source connector (captures demo collections)
+  if echo "$EXISTING" | grep -q "demo-mongodb-source"; then
+    ok "demo-mongodb-source: already registered"
+  else
+    info "Registering MongoDB CDC connector..."
+    curl -sf -X POST "http://${debezium}:8083/connectors" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"name\": \"demo-mongodb-source\",
+        \"config\": {
+          \"connector.class\": \"io.debezium.connector.mongodb.MongoDbConnector\",
+          \"mongodb.connection.string\": \"mongodb://${mongo_host}:27017/?replicaSet=rs0\",
+          \"topic.prefix\": \"source\",
+          \"database.include.list\": \"ecommerce\",
+          \"collection.include.list\": \"ecommerce.products,ecommerce.inventory\",
+          \"capture.mode\": \"change_streams_update_full\",
+          \"snapshot.mode\": \"initial\",
+          \"transforms\": \"unwrap\",
+          \"transforms.unwrap.type\": \"io.debezium.transforms.ExtractNewRecordState\",
+          \"transforms.unwrap.drop.tombstones\": \"true\"
+        }
+      }" | python3 -m json.tool 2>/dev/null && ok "demo-mongodb-source: registered" || fail "MongoDB connector registration failed"
+  fi
+
+  # --- 2.4 Verify connector status ---
+  step "2.4" "Verify connector status"
+  sleep 5
+  for connector in demo-postgres-source demo-mongodb-source; do
+    STATE=$(curl -sf "http://${debezium}:8083/connectors/${connector}/status" 2>/dev/null | \
+      python3 -c "import sys,json; print(json.load(sys.stdin)['connector']['state'])" 2>/dev/null || echo "UNKNOWN")
+    if [ "$STATE" = "RUNNING" ]; then
+      ok "${connector}: ${G}RUNNING${NC}"
+    else
+      warn "${connector}: ${Y}${STATE}${NC} (may need a few seconds to start)"
+    fi
+  done
+
+  # --- 2.5 MirrorMaker2 status ---
+  step "2.5" "MirrorMaker2 (OnPrem Kafka → MSK US-W)"
+  if [ -n "${USW_MSK_BROKERS:-}" ]; then
+    info "MirrorMaker2 should be running on the Debezium EC2 or a dedicated instance."
+    info "If not started yet, run on the OnPrem EC2:"
+    echo -e "    ${DIM}bash shared/scripts/setup-mirrormaker2.sh '${kafka}' '${USW_MSK_BROKERS}'${NC}"
+    echo ""
+
+    # Check if MM2 topics exist in source Kafka
+    info "Checking for MM2 heartbeat topics in OnPrem Kafka..."
+    MM2_CHECK=$(kubectl exec -n dr-demo deploy/demo-api -- bash -c "
+      pip install -q kafka-python 2>/dev/null
+      python3 -c \"
+from kafka import KafkaConsumer
+c=KafkaConsumer(bootstrap_servers='${kafka}')
+mm2=[t for t in c.topics() if 'heartbeat' in t or 'checkpoint' in t or 'offset-syncs' in t]
+c.close()
+print('FOUND' if mm2 else 'NONE')
+\" 2>/dev/null" 2>/dev/null || echo "SKIP")
+
+    if [ "$MM2_CHECK" = "FOUND" ]; then
+      ok "MirrorMaker2 appears to be running (heartbeat topics found)"
+    elif [ "$MM2_CHECK" = "NONE" ]; then
+      warn "MirrorMaker2 not detected. Start it before seeding data."
+    else
+      warn "Could not check MM2 status (Kafka not reachable from pod)"
+    fi
+  else
+    warn "USW_MSK_BROKERS not set — MirrorMaker2 cannot be verified"
+  fi
+
+  # --- 2.6 MSK Connect status ---
+  step "2.6" "MSK Connect sink connectors (managed by Terraform)"
+  info "JDBC Sink (US-W): MSK → Aurora DSQL — configured via Terraform"
+  info "MongoDB Sink (US-W): MSK → MongoDB EC2 — configured via Terraform"
+  info "MongoDB Sink (US-E): MSK → MongoDB EC2 — configured via Terraform"
+  info "MSK Replicator (US-W → US-E): configured via Terraform"
+  ok "Managed connectors are provisioned by infrastructure code"
+
+  echo -e "\n${G}${BOLD}CDC pipeline setup complete.${NC}"
+  echo -e "${DIM}Pipeline: PG/MongoDB → Debezium → Kafka → MM2 → MSK → Connect → Targets${NC}"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 3: Seed Demo Data (CloudFront → ALB → EKS → DB)
 # ─────────────────────────────────────────────────────────────────────────────
 
 do_seed() {
-  banner "STEP 2: Seed Demo Data via API"
+  banner "STEP 3: Seed Demo Data via API"
   local count="${DEMO_RECORD_COUNT:-100}"
   local url=""
 
@@ -124,7 +304,7 @@ do_seed() {
     trap "kill $PF_PID 2>/dev/null" EXIT
   fi
 
-  step "2.1" "Health check"
+  step "3.1" "Health check"
   if curl -sf "${url}/health" | python3 -m json.tool; then
     ok "API is healthy"
   else
@@ -132,7 +312,7 @@ do_seed() {
     exit 1
   fi
 
-  step "2.2" "Seeding ${count} records (customers+orders → PG, products+inventory → MongoDB)"
+  step "3.2" "Seeding ${count} records (customers+orders → PG, products+inventory → MongoDB)"
   RESULT=$(curl -sf -X POST "${url}/api/demo/seed" \
     -H "Content-Type: application/json" \
     -d "{\"count\": ${count}}")
@@ -141,7 +321,7 @@ do_seed() {
   echo "$BATCH_ID" > "${SCRIPT_DIR}/.demo-batch-id"
   ok "Batch ID: ${BATCH_ID}"
 
-  step "2.3" "Verify source data counts"
+  step "3.3" "Verify source data counts"
   curl -sf "${url}/api/demo/count?batch_id=${BATCH_ID}" | python3 -m json.tool
   ok "Source data seeded successfully"
 
@@ -154,11 +334,11 @@ do_seed() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 do_pipeline() {
-  banner "STEP 3: CDC Pipeline Status"
+  banner "STEP 4: CDC Pipeline Status"
   local debezium="${ONPREM_DEBEZIUM_HOST}"
 
-  step "3.1" "Debezium Connector Status"
-  for connector in postgres-source mongodb-source; do
+  step "5.1" "Debezium Connector Status"
+  for connector in demo-postgres-source demo-mongodb-source; do
     STATUS=$(curl -sf "http://${debezium}:8083/connectors/${connector}/status" 2>/dev/null || echo '{"error":"unreachable"}')
     STATE=$(echo "$STATUS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('connector',{}).get('state','UNKNOWN'))" 2>/dev/null || echo "ERROR")
     if [ "$STATE" = "RUNNING" ]; then
@@ -168,7 +348,7 @@ do_pipeline() {
     fi
   done
 
-  step "3.2" "OnPrem Kafka Topics (CDC)"
+  step "5.2" "OnPrem Kafka Topics (CDC)"
   if [ -n "${ONPREM_KAFKA_BROKERS:-}" ]; then
     info "Checking for Debezium topics..."
     TOPICS=$(kubectl exec -n dr-demo deploy/demo-api -- bash -c \
@@ -186,7 +366,7 @@ for t in sorted(topics): print(t)
     fi
   fi
 
-  step "3.3" "MSK US-W Replication (MirrorMaker2 → MSK)"
+  step "5.3" "MSK US-W Replication (MirrorMaker2 → MSK)"
   if [ -n "${USW_MSK_BROKERS:-}" ]; then
     info "MirrorMaker2 replicates OnPrem Kafka → MSK US-W"
     ok "MSK US-W brokers: ${USW_MSK_BROKERS:0:60}..."
@@ -194,12 +374,12 @@ for t in sorted(topics): print(t)
     warn "USW_MSK_BROKERS not configured in demo.env"
   fi
 
-  step "3.4" "MSK Connect Sink Connectors"
+  step "4.4" "MSK Connect Sink Connectors"
   info "JDBC Sink: MSK US-W → Aurora DSQL (US-W)"
   info "MongoDB Sink (US-W): MSK US-W → MongoDB EC2 (US-W)"
   info "MongoDB Sink (US-E): MSK US-E → MongoDB EC2 (US-E)"
 
-  step "3.5" "MSK Replicator (US-W → US-E)"
+  step "4.5" "MSK Replicator (US-W → US-E)"
   info "Cross-region replication: MSK US-W topics → MSK US-E"
   info "Aurora DSQL auto-replicates: DSQL Primary (US-W) → DSQL Linked (US-E)"
 }
@@ -209,7 +389,7 @@ for t in sorted(topics): print(t)
 # ─────────────────────────────────────────────────────────────────────────────
 
 do_verify() {
-  banner "STEP 4: Verify Replication Across All Regions"
+  banner "STEP 5: Verify Replication Across All Regions"
   local batch_id=""
   [ -f "${SCRIPT_DIR}/.demo-batch-id" ] && batch_id=$(cat "${SCRIPT_DIR}/.demo-batch-id")
 
@@ -232,7 +412,7 @@ do_verify() {
   local count="${DEMO_RECORD_COUNT:-100}"
 
   # --- Source: OnPrem ---
-  step "4.1" "OnPrem Source (PostgreSQL + MongoDB)"
+  step "5.1" "OnPrem Source (PostgreSQL + MongoDB)"
   PG_CUSTOMERS=$(PGPASSWORD="${POSTGRES_PASSWORD:-}" psql -h "${ONPREM_PG_HOST}" -U "${PG_USER:-debezium}" -d "${PG_DB:-ecommerce}" -tAc \
     "SELECT COUNT(*) FROM customers WHERE batch_id LIKE 'demo_%'" 2>/dev/null || echo "0")
   check_result "OnPrem PG customers" "$PG_CUSTOMERS" "$count"
@@ -242,7 +422,7 @@ do_verify() {
   check_result "OnPrem MongoDB products" "$MONGO_PRODUCTS" "$count"
 
   # --- Target: US-W ---
-  step "4.2" "US-W Target (Aurora DSQL + MongoDB)"
+  step "5.2" "US-W Target (Aurora DSQL + MongoDB)"
   if [ -n "${USW_DSQL_ENDPOINT:-}" ]; then
     DSQL_CUSTOMERS=$(psql "host=${USW_DSQL_ENDPOINT}.dsql.us-west-2.on.aws dbname=postgres sslmode=require" -tAc \
       "SELECT COUNT(*) FROM customers WHERE batch_id LIKE 'demo_%'" 2>/dev/null || echo "0")
@@ -260,7 +440,7 @@ do_verify() {
   fi
 
   # --- Target: US-E (DR) ---
-  step "4.3" "US-E DR Target (Aurora DSQL Linked + MongoDB)"
+  step "5.3" "US-E DR Target (Aurora DSQL Linked + MongoDB)"
   if [ -n "${USE_DSQL_ENDPOINT:-}" ]; then
     DSQL_DR=$(psql "host=${USE_DSQL_ENDPOINT}.dsql.us-east-1.on.aws dbname=postgres sslmode=require" -tAc \
       "SELECT COUNT(*) FROM customers WHERE batch_id LIKE 'demo_%'" 2>/dev/null || echo "0")
@@ -288,21 +468,21 @@ do_verify() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 do_dr_test() {
-  banner "STEP 5: DR Failover Simulation"
+  banner "STEP 6: DR Failover Simulation"
 
-  step "5.1" "Simulate OnPrem failure — stop writing new data"
+  step "6.1" "Simulate OnPrem failure — stop writing new data"
   info "In a real DR scenario, the OnPrem VPC becomes unreachable"
   info "Aurora DSQL (US-E) already has the latest data (auto-replicated)"
   info "MongoDB (US-E) has the latest data via MSK Replicator pipeline"
 
-  step "5.2" "Connect to US-E EKS cluster"
+  step "6.2" "Connect to US-E EKS cluster"
   if aws eks update-kubeconfig --region us-east-1 --name "use-eks" --alias use-eks 2>/dev/null; then
     ok "Connected to US-E EKS"
   else
     warn "US-E EKS cluster not reachable (expected if not deployed yet)"
   fi
 
-  step "5.3" "Verify US-E data availability"
+  step "6.3" "Verify US-E data availability"
   if [ -n "${USE_DSQL_ENDPOINT:-}" ]; then
     DR_COUNT=$(psql "host=${USE_DSQL_ENDPOINT}.dsql.us-east-1.on.aws dbname=postgres sslmode=require" -tAc \
       "SELECT COUNT(*) FROM customers" 2>/dev/null || echo "?")
@@ -314,7 +494,7 @@ do_dr_test() {
     ok "US-E MongoDB: ${DR_MONGO} total products"
   fi
 
-  step "5.4" "DR Readiness Assessment"
+  step "6.4" "DR Readiness Assessment"
   echo -e "
   ${BOLD}DR Failover Checklist:${NC}
   ${G}✓${NC} Aurora DSQL (US-E) — active-active, automatic replication
@@ -345,12 +525,26 @@ do_cleanup() {
       ok "Demo data deleted via API" || warn "API cleanup failed, will delete manually"
   fi
 
-  step "C.2" "Removing K8s resources"
+  step "C.2" "Removing Debezium demo connectors"
+  local debezium="${ONPREM_DEBEZIUM_HOST:-}"
+  if [ -n "$debezium" ]; then
+    for connector in demo-postgres-source demo-mongodb-source; do
+      curl -sf -X DELETE "http://${debezium}:8083/connectors/${connector}" 2>/dev/null && \
+        ok "Deleted connector: ${connector}" || info "Connector ${connector} not found (already removed)"
+    done
+
+    # Clean up replication slot
+    PGPASSWORD="${POSTGRES_PASSWORD:-}" psql -h "${ONPREM_PG_HOST}" -U "${PG_USER:-debezium}" -d "${PG_DB:-ecommerce}" -c \
+      "SELECT pg_drop_replication_slot('demo_slot') WHERE EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name='demo_slot')" 2>/dev/null && \
+      ok "Replication slot dropped" || info "No replication slot to drop"
+  fi
+
+  step "C.3" "Removing K8s resources"
   aws eks update-kubeconfig --region us-west-2 --name "${ONPREM_EKS_CLUSTER:-onprem-eks}" --alias onprem-eks 2>/dev/null || true
   kubectl delete namespace dr-demo --ignore-not-found --timeout=60s 2>/dev/null && \
     ok "Namespace dr-demo deleted" || warn "Namespace deletion timed out"
 
-  step "C.3" "Cleaning up local state files"
+  step "C.4" "Cleaning up local state files"
   rm -f "${SCRIPT_DIR}/.demo-url" "${SCRIPT_DIR}/.demo-batch-id"
   ok "Local state cleaned"
 
@@ -371,6 +565,9 @@ do_all() {
   read -rp "Press Enter to start the demo..."
 
   do_deploy
+  echo ""; read -rp "Press Enter to setup CDC pipeline..."
+
+  do_setup
   echo ""; read -rp "Press Enter to seed data..."
 
   do_seed
@@ -400,6 +597,7 @@ load_env
 
 case "${1:-all}" in
   deploy)   do_deploy ;;
+  setup)    do_setup ;;
   seed)     do_seed ;;
   pipeline) do_pipeline ;;
   verify)   do_verify ;;
@@ -407,15 +605,16 @@ case "${1:-all}" in
   cleanup)  do_cleanup ;;
   all)      do_all ;;
   *)
-    echo "Usage: $0 [deploy|seed|pipeline|verify|dr-test|cleanup|all]"
+    echo "Usage: $0 [deploy|setup|seed|pipeline|verify|dr-test|cleanup|all]"
     echo ""
     echo "Steps:"
-    echo "  deploy   - Deploy Demo API to OnPrem EKS"
-    echo "  seed     - Generate test data via API (CF → ALB → EKS → DB)"
-    echo "  pipeline - Check CDC pipeline status (Debezium, Kafka, MSK)"
-    echo "  verify   - Verify data replication across all regions"
-    echo "  dr-test  - Simulate DR failover to US-E"
-    echo "  cleanup  - Remove all demo resources and data"
+    echo "  deploy   - 1. Deploy Demo API to OnPrem EKS"
+    echo "  setup    - 2. Setup CDC pipeline (Debezium connectors + MM2 check)"
+    echo "  seed     - 3. Generate test data via API (CF → ALB → EKS → DB)"
+    echo "  pipeline - 4. Check CDC pipeline status (Debezium, Kafka, MSK)"
+    echo "  verify   - 5. Verify data replication across all regions"
+    echo "  dr-test  - 6. Simulate DR failover to US-E"
+    echo "  cleanup  - Remove all demo resources, connectors, and data"
     echo "  all      - Run full interactive demo (default)"
     exit 1
     ;;

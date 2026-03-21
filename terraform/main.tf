@@ -1188,9 +1188,9 @@ module "msk_connect_mongo_usw" {
   worker_count          = 1
   connector_configuration = {
     "tasks.max"                      = "2"
-    "topics"                         = "source.inventory.products"
+    "topics"                         = "source.ecommerce.products,source.ecommerce.inventory"
     "connection.uri"                 = "mongodb://${module.usw_mongodb.private_ips["mongodb"]}:27017"
-    "database"                       = "inventory"
+    "database"                       = "ecommerce"
     "key.converter"                  = "org.apache.kafka.connect.json.JsonConverter"
     "value.converter"                = "org.apache.kafka.connect.json.JsonConverter"
     "key.converter.schemas.enable"   = "false"
@@ -1248,9 +1248,9 @@ module "msk_connect_mongo_use" {
   worker_count          = 1
   connector_configuration = {
     "tasks.max"                      = "2"
-    "topics"                         = "source.inventory.products"
+    "topics"                         = "source.ecommerce.products,source.ecommerce.inventory"
     "connection.uri"                 = "mongodb://${module.use_mongodb.private_ips["mongodb"]}:27017"
-    "database"                       = "inventory"
+    "database"                       = "ecommerce"
     "key.converter"                  = "org.apache.kafka.connect.json.JsonConverter"
     "value.converter"                = "org.apache.kafka.connect.json.JsonConverter"
     "key.converter.schemas.enable"   = "false"

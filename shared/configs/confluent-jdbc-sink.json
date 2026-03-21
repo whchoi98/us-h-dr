@@ -1,7 +1,7 @@
 {
   "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
   "connection.url": "jdbc:aws-dsql://${DSQL_ENDPOINT}:5432/postgres",
-  "topics.regex": "source\\.dbserver1\\.public\\..*",
+  "topics.regex": "source\\.public\\..*",
   "insert.mode": "upsert",
   "pk.mode": "record_key",
   "auto.create": "true",

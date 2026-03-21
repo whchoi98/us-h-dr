@@ -2,7 +2,7 @@
   "connector.class": "com.mongodb.kafka.connect.MongoSinkConnector",
   "connection.uri": "mongodb://${MONGO_USER}:${MONGO_PASSWORD}@${MONGO_HOST}:27017/?authSource=admin",
   "database": "ecommerce",
-  "topics.regex": "source\\.mongo\\.ecommerce\\..*",
+  "topics.regex": "source\\.ecommerce\\..*",
   "writemodel.strategy": "com.mongodb.kafka.connect.sink.writemodel.strategy.ReplaceOneDefaultStrategy",
   "document.id.strategy": "com.mongodb.kafka.connect.sink.processor.id.strategy.ProvidedInKeyStrategy",
   "key.converter": "org.apache.kafka.connect.json.JsonConverter",

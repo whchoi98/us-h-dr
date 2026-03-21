@@ -7,7 +7,7 @@
     "database.user": "debezium",
     "database.password": "${POSTGRES_PASSWORD}",
     "database.dbname": "ecommerce",
-    "topic.prefix": "dbserver1",
+    "topic.prefix": "source",
     "plugin.name": "pgoutput",
     "slot.name": "debezium_slot",
     "publication.name": "dbz_publication",

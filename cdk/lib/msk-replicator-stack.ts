@@ -25,6 +25,11 @@ export class MskReplicatorStack extends cdk.Stack {
     // IAM Role for MSK Replicator
     // -------------------------------------------------------------------------
 
+    const sourceTopicArn = props.sourceMskClusterArn.replace(':cluster/', ':topic/') + '/*';
+    const sourceGroupArn = props.sourceMskClusterArn.replace(':cluster/', ':group/') + '/*';
+    const targetTopicArn = props.targetMskClusterArn.replace(':cluster/', ':topic/') + '/*';
+    const targetGroupArn = props.targetMskClusterArn.replace(':cluster/', ':group/') + '/*';
+
     const replicatorRole = new iam.Role(this, 'MskReplicatorRole', {
       roleName: 'dr-lab-msk-replicator-role',
       assumedBy: new iam.ServicePrincipal('kafka.amazonaws.com'),
@@ -32,18 +37,32 @@ export class MskReplicatorStack extends cdk.Stack {
         mskReplicatorAccess: new iam.PolicyDocument({
           statements: [
             new iam.PolicyStatement({
+              sid: 'ClusterAccess',
               actions: [
                 'kafka-cluster:Connect',
                 'kafka-cluster:DescribeCluster',
-                'kafka-cluster:ReadData',
-                'kafka-cluster:WriteData',
-                'kafka-cluster:CreateTopic',
+                'kafka-cluster:AlterCluster',
+              ],
+              resources: [props.sourceMskClusterArn, props.targetMskClusterArn],
+            }),
+            new iam.PolicyStatement({
+              sid: 'TopicAccess',
+              actions: [
                 'kafka-cluster:DescribeTopic',
+                'kafka-cluster:CreateTopic',
                 'kafka-cluster:AlterTopic',
+                'kafka-cluster:WriteData',
+                'kafka-cluster:ReadData',
+              ],
+              resources: [sourceTopicArn, targetTopicArn],
+            }),
+            new iam.PolicyStatement({
+              sid: 'GroupAccess',
+              actions: [
                 'kafka-cluster:AlterGroup',
                 'kafka-cluster:DescribeGroup',
               ],
-              resources: ['*'],
+              resources: [sourceGroupArn, targetGroupArn],
             }),
           ],
         }),

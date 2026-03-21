@@ -31,7 +31,7 @@ export class AuroraDsqlStack extends cdk.Stack {
     this.primaryCluster = new cdk.CfnResource(this, 'DsqlPrimary', {
       type: 'AWS::DSQL::Cluster',
       properties: {
-        DeletionProtectionEnabled: false,
+        DeletionProtectionEnabled: true,
         Tags: [
           { Key: 'Name', Value: 'dr-lab-dsql-primary' },
           { Key: 'Component', Value: 'aurora-dsql' },
@@ -51,7 +51,7 @@ export class AuroraDsqlStack extends cdk.Stack {
     this.linkedCluster = new cdk.CfnResource(this, 'DsqlLinked', {
       type: 'AWS::DSQL::Cluster',
       properties: {
-        DeletionProtectionEnabled: false,
+        DeletionProtectionEnabled: true,
         Tags: [
           { Key: 'Name', Value: 'dr-lab-dsql-linked' },
           { Key: 'Component', Value: 'aurora-dsql' },

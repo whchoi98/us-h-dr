@@ -51,23 +51,24 @@ variable "use_center_vpc_cidr" {
 
 # -----------------------------------------------------------------------------
 # On-Prem VPC Subnets (10.0.0.0/16)
+# Tiers: public(/24), private(/20), data(/23), tgw(/24)
 # -----------------------------------------------------------------------------
 variable "onprem_public_subnets" {
   description = "Public subnet CIDRs for the on-prem VPC"
   type        = list(string)
-  default     = ["10.0.1.0/24", "10.0.2.0/24"]
+  default     = ["10.0.0.0/24", "10.0.1.0/24"]
 }
 
 variable "onprem_private_subnets" {
   description = "Private subnet CIDRs for the on-prem VPC"
   type        = list(string)
-  default     = ["10.0.10.0/24", "10.0.11.0/24"]
+  default     = ["10.0.16.0/20", "10.0.32.0/20"]
 }
 
 variable "onprem_data_subnets" {
   description = "Data subnet CIDRs for the on-prem VPC"
   type        = list(string)
-  default     = ["10.0.20.0/24", "10.0.21.0/24"]
+  default     = ["10.0.48.0/23", "10.0.50.0/23"]
 }
 
 variable "onprem_tgw_subnets" {
@@ -78,23 +79,24 @@ variable "onprem_tgw_subnets" {
 
 # -----------------------------------------------------------------------------
 # US-West Center VPC Subnets (10.1.0.0/16)
+# Tiers: public(/24), private(/20), data(/23), tgw(/24)
 # -----------------------------------------------------------------------------
 variable "usw_center_public_subnets" {
   description = "Public subnet CIDRs for the US-West center VPC"
   type        = list(string)
-  default     = ["10.1.1.0/24", "10.1.2.0/24"]
+  default     = ["10.1.0.0/24", "10.1.1.0/24"]
 }
 
 variable "usw_center_private_subnets" {
   description = "Private subnet CIDRs for the US-West center VPC"
   type        = list(string)
-  default     = ["10.1.10.0/24", "10.1.11.0/24"]
+  default     = ["10.1.16.0/20", "10.1.32.0/20"]
 }
 
 variable "usw_center_data_subnets" {
   description = "Data subnet CIDRs for the US-West center VPC"
   type        = list(string)
-  default     = ["10.1.20.0/24", "10.1.21.0/24"]
+  default     = ["10.1.48.0/23", "10.1.50.0/23"]
 }
 
 variable "usw_center_tgw_subnets" {
@@ -105,23 +107,24 @@ variable "usw_center_tgw_subnets" {
 
 # -----------------------------------------------------------------------------
 # US-East Center VPC Subnets (10.2.0.0/16)
+# Tiers: public(/24), private(/20), data(/23), tgw(/24)
 # -----------------------------------------------------------------------------
 variable "use_center_public_subnets" {
   description = "Public subnet CIDRs for the US-East center VPC"
   type        = list(string)
-  default     = ["10.2.1.0/24", "10.2.2.0/24"]
+  default     = ["10.2.0.0/24", "10.2.1.0/24"]
 }
 
 variable "use_center_private_subnets" {
   description = "Private subnet CIDRs for the US-East center VPC"
   type        = list(string)
-  default     = ["10.2.10.0/24", "10.2.11.0/24"]
+  default     = ["10.2.16.0/20", "10.2.32.0/20"]
 }
 
 variable "use_center_data_subnets" {
   description = "Data subnet CIDRs for the US-East center VPC"
   type        = list(string)
-  default     = ["10.2.20.0/24", "10.2.21.0/24"]
+  default     = ["10.2.48.0/23", "10.2.50.0/23"]
 }
 
 variable "use_center_tgw_subnets" {
@@ -175,6 +178,12 @@ variable "kafka_broker_count" {
 # -----------------------------------------------------------------------------
 # MSK Configuration
 # -----------------------------------------------------------------------------
+variable "msk_kafka_version" {
+  description = "Kafka version for MSK clusters"
+  type        = string
+  default     = "3.7.x.kraft"
+}
+
 variable "msk_instance_type" {
   description = "MSK broker instance type"
   type        = string

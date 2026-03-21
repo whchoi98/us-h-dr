@@ -136,118 +136,71 @@ module "tgw_east" {
 
 # -----------------------------------------------------------------------------
 # Cross-VPC Routes (via Transit Gateway)
+# Dynamically generated from locals to reduce duplication.
+# West-region routes use default provider; East-region routes use aws.us_east_1.
 # -----------------------------------------------------------------------------
 
-# OnPrem private route tables → US-W-CENTER CIDR
-resource "aws_route" "onprem_private_to_usw" {
-  count = length(module.onprem_vpc.private_route_table_ids)
+locals {
+  # West-region routes (OnPrem + US-W → other VPCs via TGW West)
+  west_routes = merge(
+    { for i, rt in module.onprem_vpc.private_route_table_ids :
+      "onprem-priv-${i}-to-usw" => { rt_id = rt, dest = var.usw_center_vpc_cidr, tgw = module.tgw_west.tgw_id }
+    },
+    { for i, rt in module.onprem_vpc.private_route_table_ids :
+      "onprem-priv-${i}-to-use" => { rt_id = rt, dest = var.use_center_vpc_cidr, tgw = module.tgw_west.tgw_id }
+    },
+    { for i, rt in module.onprem_vpc.data_route_table_ids :
+      "onprem-data-${i}-to-usw" => { rt_id = rt, dest = var.usw_center_vpc_cidr, tgw = module.tgw_west.tgw_id }
+    },
+    { for i, rt in module.onprem_vpc.data_route_table_ids :
+      "onprem-data-${i}-to-use" => { rt_id = rt, dest = var.use_center_vpc_cidr, tgw = module.tgw_west.tgw_id }
+    },
+    { for i, rt in module.usw_center_vpc.private_route_table_ids :
+      "usw-priv-${i}-to-onprem" => { rt_id = rt, dest = var.onprem_vpc_cidr, tgw = module.tgw_west.tgw_id }
+    },
+    { for i, rt in module.usw_center_vpc.private_route_table_ids :
+      "usw-priv-${i}-to-use" => { rt_id = rt, dest = var.use_center_vpc_cidr, tgw = module.tgw_west.tgw_id }
+    },
+    { for i, rt in module.usw_center_vpc.data_route_table_ids :
+      "usw-data-${i}-to-onprem" => { rt_id = rt, dest = var.onprem_vpc_cidr, tgw = module.tgw_west.tgw_id }
+    },
+    { for i, rt in module.usw_center_vpc.data_route_table_ids :
+      "usw-data-${i}-to-use" => { rt_id = rt, dest = var.use_center_vpc_cidr, tgw = module.tgw_west.tgw_id }
+    },
+  )
 
-  route_table_id         = module.onprem_vpc.private_route_table_ids[count.index]
-  destination_cidr_block = var.usw_center_vpc_cidr
-  transit_gateway_id     = module.tgw_west.tgw_id
+  # East-region routes (US-E → other VPCs via TGW East)
+  east_routes = merge(
+    { for i, rt in module.use_center_vpc.private_route_table_ids :
+      "use-priv-${i}-to-onprem" => { rt_id = rt, dest = var.onprem_vpc_cidr, tgw = module.tgw_east.tgw_id }
+    },
+    { for i, rt in module.use_center_vpc.private_route_table_ids :
+      "use-priv-${i}-to-usw" => { rt_id = rt, dest = var.usw_center_vpc_cidr, tgw = module.tgw_east.tgw_id }
+    },
+    { for i, rt in module.use_center_vpc.data_route_table_ids :
+      "use-data-${i}-to-onprem" => { rt_id = rt, dest = var.onprem_vpc_cidr, tgw = module.tgw_east.tgw_id }
+    },
+    { for i, rt in module.use_center_vpc.data_route_table_ids :
+      "use-data-${i}-to-usw" => { rt_id = rt, dest = var.usw_center_vpc_cidr, tgw = module.tgw_east.tgw_id }
+    },
+  )
 }
 
-# OnPrem private route tables → US-E-CENTER CIDR
-resource "aws_route" "onprem_private_to_use" {
-  count = length(module.onprem_vpc.private_route_table_ids)
+resource "aws_route" "cross_vpc_west" {
+  for_each = local.west_routes
 
-  route_table_id         = module.onprem_vpc.private_route_table_ids[count.index]
-  destination_cidr_block = var.use_center_vpc_cidr
-  transit_gateway_id     = module.tgw_west.tgw_id
+  route_table_id         = each.value.rt_id
+  destination_cidr_block = each.value.dest
+  transit_gateway_id     = each.value.tgw
 }
 
-# OnPrem data route tables → US-W-CENTER CIDR
-resource "aws_route" "onprem_data_to_usw" {
-  count = length(module.onprem_vpc.data_route_table_ids)
-
-  route_table_id         = module.onprem_vpc.data_route_table_ids[count.index]
-  destination_cidr_block = var.usw_center_vpc_cidr
-  transit_gateway_id     = module.tgw_west.tgw_id
-}
-
-# OnPrem data route tables → US-E-CENTER CIDR
-resource "aws_route" "onprem_data_to_use" {
-  count = length(module.onprem_vpc.data_route_table_ids)
-
-  route_table_id         = module.onprem_vpc.data_route_table_ids[count.index]
-  destination_cidr_block = var.use_center_vpc_cidr
-  transit_gateway_id     = module.tgw_west.tgw_id
-}
-
-# US-W-CENTER private route tables → OnPrem CIDR
-resource "aws_route" "usw_private_to_onprem" {
-  count = length(module.usw_center_vpc.private_route_table_ids)
-
-  route_table_id         = module.usw_center_vpc.private_route_table_ids[count.index]
-  destination_cidr_block = var.onprem_vpc_cidr
-  transit_gateway_id     = module.tgw_west.tgw_id
-}
-
-# US-W-CENTER private route tables → US-E-CENTER CIDR
-resource "aws_route" "usw_private_to_use" {
-  count = length(module.usw_center_vpc.private_route_table_ids)
-
-  route_table_id         = module.usw_center_vpc.private_route_table_ids[count.index]
-  destination_cidr_block = var.use_center_vpc_cidr
-  transit_gateway_id     = module.tgw_west.tgw_id
-}
-
-# US-W-CENTER data route tables → OnPrem CIDR
-resource "aws_route" "usw_data_to_onprem" {
-  count = length(module.usw_center_vpc.data_route_table_ids)
-
-  route_table_id         = module.usw_center_vpc.data_route_table_ids[count.index]
-  destination_cidr_block = var.onprem_vpc_cidr
-  transit_gateway_id     = module.tgw_west.tgw_id
-}
-
-# US-W-CENTER data route tables → US-E-CENTER CIDR
-resource "aws_route" "usw_data_to_use" {
-  count = length(module.usw_center_vpc.data_route_table_ids)
-
-  route_table_id         = module.usw_center_vpc.data_route_table_ids[count.index]
-  destination_cidr_block = var.use_center_vpc_cidr
-  transit_gateway_id     = module.tgw_west.tgw_id
-}
-
-# US-E-CENTER private route tables → OnPrem CIDR
-resource "aws_route" "use_private_to_onprem" {
+resource "aws_route" "cross_vpc_east" {
+  for_each = local.east_routes
   provider = aws.us_east_1
-  count    = length(module.use_center_vpc.private_route_table_ids)
 
-  route_table_id         = module.use_center_vpc.private_route_table_ids[count.index]
-  destination_cidr_block = var.onprem_vpc_cidr
-  transit_gateway_id     = module.tgw_east.tgw_id
-}
-
-# US-E-CENTER private route tables → US-W-CENTER CIDR
-resource "aws_route" "use_private_to_usw" {
-  provider = aws.us_east_1
-  count    = length(module.use_center_vpc.private_route_table_ids)
-
-  route_table_id         = module.use_center_vpc.private_route_table_ids[count.index]
-  destination_cidr_block = var.usw_center_vpc_cidr
-  transit_gateway_id     = module.tgw_east.tgw_id
-}
-
-# US-E-CENTER data route tables → OnPrem CIDR
-resource "aws_route" "use_data_to_onprem" {
-  provider = aws.us_east_1
-  count    = length(module.use_center_vpc.data_route_table_ids)
-
-  route_table_id         = module.use_center_vpc.data_route_table_ids[count.index]
-  destination_cidr_block = var.onprem_vpc_cidr
-  transit_gateway_id     = module.tgw_east.tgw_id
-}
-
-# US-E-CENTER data route tables → US-W-CENTER CIDR
-resource "aws_route" "use_data_to_usw" {
-  provider = aws.us_east_1
-  count    = length(module.use_center_vpc.data_route_table_ids)
-
-  route_table_id         = module.use_center_vpc.data_route_table_ids[count.index]
-  destination_cidr_block = var.usw_center_vpc_cidr
-  transit_gateway_id     = module.tgw_east.tgw_id
+  route_table_id         = each.value.rt_id
+  destination_cidr_block = each.value.dest
+  transit_gateway_id     = each.value.tgw
 }
 
 # -----------------------------------------------------------------------------
@@ -900,7 +853,7 @@ module "onprem_debezium" {
 module "msk_usw" {
   source                     = "./modules/msk"
   cluster_name               = "dr-lab-msk-usw"
-  kafka_version              = "3.7.x.kraft"
+  kafka_version              = var.msk_kafka_version
   broker_instance_type       = var.msk_instance_type
   number_of_broker_nodes     = var.msk_broker_count
   subnet_ids                 = module.usw_center_vpc.data_subnet_ids
@@ -912,7 +865,7 @@ module "msk_usw" {
 module "msk_use" {
   source                     = "./modules/msk"
   cluster_name               = "dr-lab-msk-use"
-  kafka_version              = "3.7.x.kraft"
+  kafka_version              = var.msk_kafka_version
   broker_instance_type       = var.msk_instance_type
   number_of_broker_nodes     = var.msk_broker_count
   subnet_ids                 = module.use_center_vpc.data_subnet_ids

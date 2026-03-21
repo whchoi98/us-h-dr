@@ -1000,10 +1000,44 @@ resource "aws_iam_role_policy" "msk_replicator" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "KafkaDataPlane"
-        Effect   = "Allow"
-        Action   = ["kafka-cluster:*"]
-        Resource = "*"
+        Sid    = "KafkaDataPlaneCluster"
+        Effect = "Allow"
+        Action = [
+          "kafka-cluster:Connect",
+          "kafka-cluster:DescribeCluster",
+          "kafka-cluster:AlterCluster"
+        ]
+        Resource = [
+          module.msk_usw.cluster_arn,
+          module.msk_use.cluster_arn
+        ]
+      },
+      {
+        Sid    = "KafkaDataPlaneTopic"
+        Effect = "Allow"
+        Action = [
+          "kafka-cluster:DescribeTopic",
+          "kafka-cluster:CreateTopic",
+          "kafka-cluster:AlterTopic",
+          "kafka-cluster:WriteData",
+          "kafka-cluster:ReadData"
+        ]
+        Resource = [
+          "${replace(module.msk_usw.cluster_arn, ":cluster/", ":topic/")}/*",
+          "${replace(module.msk_use.cluster_arn, ":cluster/", ":topic/")}/*"
+        ]
+      },
+      {
+        Sid    = "KafkaDataPlaneGroup"
+        Effect = "Allow"
+        Action = [
+          "kafka-cluster:DescribeGroup",
+          "kafka-cluster:AlterGroup"
+        ]
+        Resource = [
+          "${replace(module.msk_usw.cluster_arn, ":cluster/", ":group/")}/*",
+          "${replace(module.msk_use.cluster_arn, ":cluster/", ":group/")}/*"
+        ]
       },
       {
         Sid    = "KafkaControlPlane"
@@ -1012,13 +1046,14 @@ resource "aws_iam_role_policy" "msk_replicator" {
           "kafka:DescribeCluster",
           "kafka:DescribeClusterV2",
           "kafka:GetBootstrapBrokers",
-          "kafka:ListClusters",
-          "kafka:ListClustersV2",
           "kafka:DescribeConfiguration",
           "kafka:DescribeReplicator",
           "kafka:ListReplicators"
         ]
-        Resource = "*"
+        Resource = [
+          module.msk_usw.cluster_arn,
+          module.msk_use.cluster_arn
+        ]
       },
       {
         Sid    = "EC2NetworkForReplicator"
@@ -1139,6 +1174,24 @@ resource "aws_s3_bucket_versioning" "connector_plugins" {
   }
 }
 
+resource "aws_s3_bucket_server_side_encryption_configuration" "connector_plugins" {
+  bucket = aws_s3_bucket.connector_plugins.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "aws:kms"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "connector_plugins" {
+  bucket                  = aws_s3_bucket.connector_plugins.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
 # JDBC Sink Connector for US-W (MSK -> Aurora DSQL)
 module "msk_connect_jdbc_usw" {
   source                = "./modules/msk-connect"
@@ -1150,6 +1203,7 @@ module "msk_connect_jdbc_usw" {
   security_group_ids    = [aws_security_group.sg_msk_connect_usw.id]
   plugin_s3_bucket      = aws_s3_bucket.connector_plugins.id
   plugin_s3_key         = "plugins/jdbc-sink-connector.zip"
+  dsql_cluster_arn      = module.aurora_dsql.primary_cluster_arn
   worker_count          = 1
   connector_configuration = {
     "tasks.max"                      = "2"
@@ -1198,6 +1252,34 @@ resource "aws_s3_bucket" "connector_plugins_use" {
   provider = aws.us_east_1
   bucket   = "dr-lab-connector-plugins-use-${data.aws_caller_identity.current.account_id}"
   tags     = { Component = "data" }
+}
+
+resource "aws_s3_bucket_versioning" "connector_plugins_use" {
+  provider = aws.us_east_1
+  bucket   = aws_s3_bucket.connector_plugins_use.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "connector_plugins_use" {
+  provider = aws.us_east_1
+  bucket   = aws_s3_bucket.connector_plugins_use.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "aws:kms"
+    }
+    bucket_key_enabled = true
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "connector_plugins_use" {
+  provider                = aws.us_east_1
+  bucket                  = aws_s3_bucket.connector_plugins_use.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
 module "msk_connect_mongo_use" {

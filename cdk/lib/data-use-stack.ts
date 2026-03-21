@@ -57,11 +57,6 @@ export class DataUseStack extends cdk.Stack {
     });
     this.mskSg.addIngressRule(
       ec2.Peer.ipv4(props.vpc.vpcCidrBlock),
-      ec2.Port.tcp(9092),
-      'Kafka PLAINTEXT from VPC'
-    );
-    this.mskSg.addIngressRule(
-      ec2.Peer.ipv4(props.vpc.vpcCidrBlock),
       ec2.Port.tcp(9094),
       'Kafka TLS from VPC'
     );
@@ -170,6 +165,10 @@ export class DataUseStack extends cdk.Stack {
     // MSK Connect – IAM Role for connectors
     // -------------------------------------------------------------------------
 
+    const mskClusterArn = this.mskClusterArn;
+    const mskTopicArn = mskClusterArn.replace(':cluster/', ':topic/') + '/*';
+    const mskGroupArn = mskClusterArn.replace(':cluster/', ':group/') + '/*';
+
     const mskConnectRole = new iam.Role(this, 'MskConnectRole', {
       roleName: 'dr-lab-use-msk-connect-role',
       assumedBy: new iam.ServicePrincipal('kafkaconnect.amazonaws.com'),
@@ -177,17 +176,32 @@ export class DataUseStack extends cdk.Stack {
         mskAccess: new iam.PolicyDocument({
           statements: [
             new iam.PolicyStatement({
+              sid: 'MskClusterAccess',
               actions: [
                 'kafka-cluster:Connect',
                 'kafka-cluster:DescribeCluster',
-                'kafka-cluster:ReadData',
-                'kafka-cluster:WriteData',
-                'kafka-cluster:CreateTopic',
+                'kafka-cluster:AlterCluster',
+              ],
+              resources: [mskClusterArn],
+            }),
+            new iam.PolicyStatement({
+              sid: 'MskTopicAccess',
+              actions: [
                 'kafka-cluster:DescribeTopic',
+                'kafka-cluster:CreateTopic',
+                'kafka-cluster:AlterTopic',
+                'kafka-cluster:WriteData',
+                'kafka-cluster:ReadData',
+              ],
+              resources: [mskTopicArn],
+            }),
+            new iam.PolicyStatement({
+              sid: 'MskGroupAccess',
+              actions: [
                 'kafka-cluster:AlterGroup',
                 'kafka-cluster:DescribeGroup',
               ],
-              resources: ['*'],
+              resources: [mskGroupArn],
             }),
           ],
         }),

@@ -49,6 +49,12 @@ variable "worker_count" {
   default     = 1
 }
 
+variable "dsql_cluster_arn" {
+  description = "ARN of the Aurora DSQL cluster (optional, for JDBC connectors)"
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

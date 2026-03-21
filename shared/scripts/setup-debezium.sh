@@ -4,7 +4,7 @@ DEBEZIUM_HOST=${1:?Usage: $0 <debezium-host> <postgres-host> <mongo-host> <kafka
 POSTGRES_HOST=${2:?}
 MONGO_HOST=${3:?}
 KAFKA_BROKERS=${4:?}
-POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-debezium123}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Error: POSTGRES_PASSWORD env var must be set}
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_DIR="$SCRIPT_DIR/../configs"

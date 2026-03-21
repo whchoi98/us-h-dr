@@ -5,13 +5,13 @@ metadata:
   region: us-east-1
   version: "1.33"
 vpc:
-  id: "vpc-0a6a6702d51919674"
+  id: "${USE_VPC_ID}"
   subnets:
     private:
       us-east-1a:
-        id: "subnet-0828e2bae3e9a8955"
+        id: "${USE_PRIVATE_SUBNET_AZA}"
       us-east-1b:
-        id: "subnet-078991a06ea5d9f90"
+        id: "${USE_PRIVATE_SUBNET_AZB}"
 managedNodeGroups:
   - name: ng-main
     instanceType: t4g.2xlarge
@@ -22,7 +22,7 @@ managedNodeGroups:
     volumeType: gp3
     amiFamily: AmazonLinux2023
     iam:
-      instanceRoleARN: "arn:aws:iam::061525506239:role/use-eks-node-role"
+      instanceRoleARN: "${USE_EKS_NODE_ROLE_ARN}"
 addons:
   - name: vpc-cni
   - name: coredns

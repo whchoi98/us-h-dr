@@ -5,13 +5,13 @@ metadata:
   region: us-west-2
   version: "1.33"
 vpc:
-  id: "vpc-05c858796f9f82616"
+  id: "${ONPREM_VPC_ID}"
   subnets:
     private:
       us-west-2a:
-        id: "subnet-0bc942ce545baa227"
+        id: "${ONPREM_PRIVATE_SUBNET_AZA}"
       us-west-2b:
-        id: "subnet-044e9b1920a59b97b"
+        id: "${ONPREM_PRIVATE_SUBNET_AZB}"
 managedNodeGroups:
   - name: ng-main
     instanceType: t4g.2xlarge
@@ -22,7 +22,7 @@ managedNodeGroups:
     volumeType: gp3
     amiFamily: AmazonLinux2023
     iam:
-      instanceRoleARN: "arn:aws:iam::061525506239:role/onprem-eks-node-role"
+      instanceRoleARN: "${ONPREM_EKS_NODE_ROLE_ARN}"
 addons:
   - name: vpc-cni
   - name: coredns

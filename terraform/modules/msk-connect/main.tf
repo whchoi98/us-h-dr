@@ -47,43 +47,68 @@ resource "aws_iam_role_policy" "msk_connect" {
   role = aws_iam_role.msk_connect.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "kafka-cluster:Connect",
-          "kafka-cluster:DescribeCluster",
-          "kafka-cluster:AlterCluster",
-          "kafka-cluster:DescribeTopic",
-          "kafka-cluster:CreateTopic",
-          "kafka-cluster:AlterTopic",
-          "kafka-cluster:WriteData",
-          "kafka-cluster:ReadData",
-          "kafka-cluster:DescribeGroup",
-          "kafka-cluster:AlterGroup"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:ListBucket"]
-        Resource = "*"
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["dsql:*"]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "*"
-      }
-    ]
+    Statement = concat(
+      [
+        {
+          Sid    = "MskClusterAccess"
+          Effect = "Allow"
+          Action = [
+            "kafka-cluster:Connect",
+            "kafka-cluster:DescribeCluster",
+            "kafka-cluster:AlterCluster"
+          ]
+          Resource = var.msk_cluster_arn
+        },
+        {
+          Sid    = "MskTopicAccess"
+          Effect = "Allow"
+          Action = [
+            "kafka-cluster:DescribeTopic",
+            "kafka-cluster:CreateTopic",
+            "kafka-cluster:AlterTopic",
+            "kafka-cluster:WriteData",
+            "kafka-cluster:ReadData"
+          ]
+          Resource = "${replace(var.msk_cluster_arn, ":cluster/", ":topic/")}/*"
+        },
+        {
+          Sid    = "MskGroupAccess"
+          Effect = "Allow"
+          Action = [
+            "kafka-cluster:DescribeGroup",
+            "kafka-cluster:AlterGroup"
+          ]
+          Resource = "${replace(var.msk_cluster_arn, ":cluster/", ":group/")}/*"
+        },
+        {
+          Sid    = "S3PluginAccess"
+          Effect = "Allow"
+          Action = ["s3:GetObject", "s3:ListBucket"]
+          Resource = [
+            "arn:aws:s3:::${var.plugin_s3_bucket}",
+            "arn:aws:s3:::${var.plugin_s3_bucket}/*"
+          ]
+        },
+        {
+          Sid    = "CloudWatchLogs"
+          Effect = "Allow"
+          Action = [
+            "logs:CreateLogGroup",
+            "logs:CreateLogStream",
+            "logs:PutLogEvents"
+          ]
+          Resource = "${aws_cloudwatch_log_group.connector.arn}:*"
+        }
+      ],
+      var.dsql_cluster_arn != "" ? [
+        {
+          Sid      = "DsqlAccess"
+          Effect   = "Allow"
+          Action   = ["dsql:DbConnectAdmin"]
+          Resource = var.dsql_cluster_arn
+        }
+      ] : []
+    )
   })
 }
 

@@ -1,0 +1,325 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dr-demo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo-api-code
+  namespace: dr-demo
+data:
+  app.py: |
+    """DR Lab Demo API — writes to PostgreSQL and MongoDB via EKS Pod."""
+    import os, json, time, datetime, random, string, hashlib
+    from flask import Flask, jsonify, request
+
+    app = Flask(__name__)
+
+    PG_HOST = os.environ.get("PG_HOST", "")
+    PG_PORT = int(os.environ.get("PG_PORT", "5432"))
+    PG_USER = os.environ.get("PG_USER", "debezium")
+    PG_PASS = os.environ.get("PG_PASS", "")
+    PG_DB   = os.environ.get("PG_DB", "ecommerce")
+    MONGO_HOST = os.environ.get("MONGO_HOST", "")
+    MONGO_PORT = int(os.environ.get("MONGO_PORT", "27017"))
+    MONGO_USER = os.environ.get("MONGO_USER", "")
+    MONGO_PASS = os.environ.get("MONGO_PASS", "")
+    MONGO_DB   = os.environ.get("MONGO_DB", "ecommerce")
+
+    def get_pg():
+        import psycopg2
+        return psycopg2.connect(host=PG_HOST, port=PG_PORT, user=PG_USER,
+                                password=PG_PASS, dbname=PG_DB)
+
+    def get_mongo():
+        from pymongo import MongoClient
+        uri = f"mongodb://{MONGO_HOST}:{MONGO_PORT}/"
+        if MONGO_USER:
+            uri = f"mongodb://{MONGO_USER}:{MONGO_PASS}@{MONGO_HOST}:{MONGO_PORT}/?authSource=admin"
+        return MongoClient(uri)[MONGO_DB]
+
+    @app.route("/health")
+    def health():
+        return jsonify({"status": "ok", "timestamp": datetime.datetime.utcnow().isoformat()})
+
+    @app.route("/api/demo/seed", methods=["POST"])
+    def seed_data():
+        """Seed demo data into PostgreSQL and MongoDB."""
+        count = request.json.get("count", 50) if request.is_json else 50
+        ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        batch_id = f"demo_{ts}"
+
+        # --- PostgreSQL: customers + orders ---
+        pg = get_pg()
+        cur = pg.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS customers (
+                id SERIAL PRIMARY KEY, name VARCHAR(200), email VARCHAR(200),
+                city VARCHAR(100), batch_id VARCHAR(50),
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+            CREATE TABLE IF NOT EXISTS orders (
+                id SERIAL PRIMARY KEY, customer_id INTEGER REFERENCES customers(id),
+                product VARCHAR(200), amount DECIMAL(10,2), status VARCHAR(30),
+                batch_id VARCHAR(50), created_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        pg.commit()
+
+        cities = ["Seoul","Tokyo","NYC","London","Berlin","Sydney","Toronto","Mumbai","Paris","SaoPaulo"]
+        statuses = ["pending","processing","shipped","delivered"]
+        products = ["Laptop","Phone","Tablet","Monitor","Keyboard","Mouse","Headset","Camera","Speaker","Watch"]
+        pg_customers = 0
+        pg_orders = 0
+
+        for i in range(count):
+            name = f"Customer_{batch_id}_{i:04d}"
+            email = f"c{i:04d}_{ts}@demo.lab"
+            city = random.choice(cities)
+            cur.execute("INSERT INTO customers (name,email,city,batch_id) VALUES (%s,%s,%s,%s) RETURNING id",
+                        (name, email, city, batch_id))
+            cid = cur.fetchone()[0]
+            pg_customers += 1
+            for _ in range(random.randint(1, 3)):
+                product = random.choice(products)
+                amount = round(random.uniform(50, 2000), 2)
+                status = random.choice(statuses)
+                cur.execute("INSERT INTO orders (customer_id,product,amount,status,batch_id) VALUES (%s,%s,%s,%s,%s)",
+                            (cid, product, amount, status, batch_id))
+                pg_orders += 1
+        pg.commit()
+        pg.close()
+
+        # --- MongoDB: products + inventory ---
+        mdb = get_mongo()
+        categories = ["Electronics","Books","Clothing","Home","Sports","Food"]
+        mongo_products = 0
+        mongo_inventory = 0
+
+        product_docs = []
+        inventory_docs = []
+        for i in range(count):
+            pid = hashlib.md5(f"{batch_id}_{i}".encode()).hexdigest()[:12]
+            doc = {
+                "product_id": pid, "name": f"Product_{batch_id}_{i:04d}",
+                "category": random.choice(categories),
+                "price": round(random.uniform(5, 500), 2),
+                "tags": random.sample(["new","sale","popular","limited","eco"], k=random.randint(1,3)),
+                "batch_id": batch_id, "created_at": datetime.datetime.utcnow()
+            }
+            product_docs.append(doc)
+            mongo_products += 1
+            inv = {
+                "product_id": pid, "warehouse": random.choice(["WH-WEST","WH-EAST","WH-CENTRAL"]),
+                "quantity": random.randint(0, 500),
+                "batch_id": batch_id, "updated_at": datetime.datetime.utcnow()
+            }
+            inventory_docs.append(inv)
+            mongo_inventory += 1
+
+        if product_docs:
+            mdb.products.insert_many(product_docs)
+        if inventory_docs:
+            mdb.inventory.insert_many(inventory_docs)
+
+        return jsonify({
+            "batch_id": batch_id,
+            "postgresql": {"customers": pg_customers, "orders": pg_orders},
+            "mongodb": {"products": mongo_products, "inventory": mongo_inventory}
+        })
+
+    @app.route("/api/demo/count")
+    def count_data():
+        """Count records in source databases."""
+        batch_id = request.args.get("batch_id", "")
+        pg = get_pg()
+        cur = pg.cursor()
+        where = f" WHERE batch_id='{batch_id}'" if batch_id else ""
+        cur.execute(f"SELECT COUNT(*) FROM customers{where}")
+        pg_customers = cur.fetchone()[0]
+        cur.execute(f"SELECT COUNT(*) FROM orders{where}")
+        pg_orders = cur.fetchone()[0]
+        pg.close()
+
+        mdb = get_mongo()
+        filt = {"batch_id": batch_id} if batch_id else {}
+        mongo_products = mdb.products.count_documents(filt)
+        mongo_inventory = mdb.inventory.count_documents(filt)
+
+        return jsonify({
+            "batch_id": batch_id or "(all)",
+            "postgresql": {"customers": pg_customers, "orders": pg_orders},
+            "mongodb": {"products": mongo_products, "inventory": mongo_inventory}
+        })
+
+    @app.route("/api/demo/cleanup", methods=["DELETE"])
+    def cleanup_data():
+        """Delete all demo data by batch_id or all demo tables."""
+        batch_id = request.args.get("batch_id", "")
+        pg = get_pg()
+        cur = pg.cursor()
+        if batch_id:
+            cur.execute("DELETE FROM orders WHERE batch_id=%s", (batch_id,))
+            cur.execute("DELETE FROM customers WHERE batch_id=%s", (batch_id,))
+        else:
+            cur.execute("DROP TABLE IF EXISTS orders CASCADE")
+            cur.execute("DROP TABLE IF EXISTS customers CASCADE")
+        pg.commit()
+        pg.close()
+
+        mdb = get_mongo()
+        if batch_id:
+            mdb.products.delete_many({"batch_id": batch_id})
+            mdb.inventory.delete_many({"batch_id": batch_id})
+        else:
+            mdb.products.drop()
+            mdb.inventory.drop()
+
+        return jsonify({"status": "cleaned", "batch_id": batch_id or "(all)"})
+
+    if __name__ == "__main__":
+        app.run(host="0.0.0.0", port=8080)
+  requirements.txt: |
+    flask==3.1.0
+    psycopg2-binary==2.9.10
+    pymongo==4.11.3
+    gunicorn==23.0.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-api
+  namespace: dr-demo
+  labels:
+    app: demo-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: demo-api
+  template:
+    metadata:
+      labels:
+        app: demo-api
+    spec:
+      containers:
+      - name: demo-api
+        image: public.ecr.aws/docker/library/python:3.12-slim
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          pip install -q -r /app/requirements.txt &&
+          exec gunicorn --bind 0.0.0.0:8080 --workers 2 --timeout 120 app:app
+        workingDir: /app
+        ports:
+        - containerPort: 8080
+        env:
+        - name: PG_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: demo-db-config
+              key: pg_host
+        - name: PG_PASS
+          valueFrom:
+            secretKeyRef:
+              name: demo-db-secrets
+              key: pg_password
+              optional: true
+        - name: PG_USER
+          valueFrom:
+            configMapKeyRef:
+              name: demo-db-config
+              key: pg_user
+        - name: PG_DB
+          valueFrom:
+            configMapKeyRef:
+              name: demo-db-config
+              key: pg_db
+        - name: MONGO_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: demo-db-config
+              key: mongo_host
+        - name: MONGO_USER
+          valueFrom:
+            configMapKeyRef:
+              name: demo-db-config
+              key: mongo_user
+              optional: true
+        - name: MONGO_PASS
+          valueFrom:
+            secretKeyRef:
+              name: demo-db-secrets
+              key: mongo_password
+              optional: true
+        volumeMounts:
+        - name: app-code
+          mountPath: /app
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: app-code
+        configMap:
+          name: demo-api-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo-api
+  namespace: dr-demo
+spec:
+  type: ClusterIP
+  selector:
+    app: demo-api
+  ports:
+  - port: 80
+    targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-api
+  namespace: dr-demo
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/group.name: dr-demo
+spec:
+  ingressClassName: alb
+  rules:
+  - http:
+      paths:
+      - path: /api/demo
+        pathType: Prefix
+        backend:
+          service:
+            name: demo-api
+            port:
+              number: 80
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: demo-api
+            port:
+              number: 80

@@ -1,0 +1,37 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: use-eks
+  region: us-east-1
+  version: "1.33"
+vpc:
+  id: "vpc-0a6a6702d51919674"
+  subnets:
+    private:
+      us-east-1a:
+        id: "subnet-0828e2bae3e9a8955"
+      us-east-1b:
+        id: "subnet-078991a06ea5d9f90"
+managedNodeGroups:
+  - name: ng-main
+    instanceType: t4g.2xlarge
+    desiredCapacity: 8
+    minSize: 8
+    maxSize: 8
+    volumeSize: 100
+    volumeType: gp3
+    amiFamily: AmazonLinux2023
+    iam:
+      instanceRoleARN: "arn:aws:iam::061525506239:role/use-eks-node-role"
+addons:
+  - name: vpc-cni
+  - name: coredns
+  - name: kube-proxy
+  - name: aws-ebs-csi-driver
+  - name: aws-efs-csi-driver
+  - name: eks-pod-identity-agent
+  - name: amazon-cloudwatch-observability
+  - name: aws-load-balancer-controller
+    version: v3.1.0
+  - name: karpenter
+    version: v1.9.0

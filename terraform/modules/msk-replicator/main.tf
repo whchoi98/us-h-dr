@@ -7,57 +7,14 @@ terraform {
 }
 
 # -----------------------------------------------------------------------------
-# IAM Role for MSK Replicator
-# -----------------------------------------------------------------------------
-
-resource "aws_iam_role" "replicator" {
-  name = "${var.replicator_name}-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Effect    = "Allow"
-      Principal = { Service = "kafka.amazonaws.com" }
-    }]
-  })
-
-  tags = var.tags
-}
-
-resource "aws_iam_role_policy" "replicator" {
-  name = "${var.replicator_name}-policy"
-  role = aws_iam_role.replicator.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "kafka-cluster:Connect",
-          "kafka-cluster:DescribeCluster",
-          "kafka-cluster:AlterCluster",
-          "kafka-cluster:DescribeTopic",
-          "kafka-cluster:CreateTopic",
-          "kafka-cluster:AlterTopic",
-          "kafka-cluster:WriteData",
-          "kafka-cluster:ReadData",
-          "kafka-cluster:DescribeGroup",
-          "kafka-cluster:AlterGroup"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
-# -----------------------------------------------------------------------------
 # MSK Replicator (Source -> Target)
+# NOTE: IAM role and cluster policies are created in main.tf (cross-region)
 # -----------------------------------------------------------------------------
 
 resource "aws_msk_replicator" "this" {
   replicator_name            = var.replicator_name
   description                = "Replication from source to target MSK cluster"
-  service_execution_role_arn = aws_iam_role.replicator.arn
+  service_execution_role_arn = var.service_execution_role_arn
 
   kafka_cluster {
     amazon_msk_cluster {

@@ -1,0 +1,37 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+metadata:
+  name: onprem-eks
+  region: us-west-2
+  version: "1.33"
+vpc:
+  id: "vpc-05c858796f9f82616"
+  subnets:
+    private:
+      us-west-2a:
+        id: "subnet-0bc942ce545baa227"
+      us-west-2b:
+        id: "subnet-044e9b1920a59b97b"
+managedNodeGroups:
+  - name: ng-main
+    instanceType: t4g.2xlarge
+    desiredCapacity: 8
+    minSize: 8
+    maxSize: 8
+    volumeSize: 100
+    volumeType: gp3
+    amiFamily: AmazonLinux2023
+    iam:
+      instanceRoleARN: "arn:aws:iam::061525506239:role/onprem-eks-node-role"
+addons:
+  - name: vpc-cni
+  - name: coredns
+  - name: kube-proxy
+  - name: aws-ebs-csi-driver
+  - name: aws-efs-csi-driver
+  - name: eks-pod-identity-agent
+  - name: amazon-cloudwatch-observability
+  - name: aws-load-balancer-controller
+    version: v3.1.0
+  - name: karpenter
+    version: v1.9.0

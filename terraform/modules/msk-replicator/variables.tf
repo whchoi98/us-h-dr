@@ -35,6 +35,11 @@ variable "target_security_group_ids" {
   default     = []
 }
 
+variable "service_execution_role_arn" {
+  description = "IAM role ARN for the MSK Replicator service"
+  type        = string
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

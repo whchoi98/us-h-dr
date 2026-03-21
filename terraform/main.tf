@@ -980,16 +980,146 @@ module "use_mongodb" {
 # TASK 17: MSK Replicator (US-W -> US-E)
 # =============================================================================
 
+# IAM Role for MSK Replicator (created outside module to break circular dependency)
+resource "aws_iam_role" "msk_replicator" {
+  name = "dr-lab-usw-to-use-replicator-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "kafka.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "msk_replicator" {
+  name = "dr-lab-usw-to-use-replicator-policy"
+  role = aws_iam_role.msk_replicator.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "KafkaDataPlane"
+        Effect   = "Allow"
+        Action   = ["kafka-cluster:*"]
+        Resource = "*"
+      },
+      {
+        Sid    = "KafkaControlPlane"
+        Effect = "Allow"
+        Action = [
+          "kafka:DescribeCluster",
+          "kafka:DescribeClusterV2",
+          "kafka:GetBootstrapBrokers",
+          "kafka:ListClusters",
+          "kafka:ListClustersV2",
+          "kafka:DescribeConfiguration",
+          "kafka:DescribeReplicator",
+          "kafka:ListReplicators"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "EC2NetworkForReplicator"
+        Effect = "Allow"
+        Action = [
+          "ec2:CreateNetworkInterface",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DeleteNetworkInterface",
+          "ec2:DescribeSubnets",
+          "ec2:DescribeSecurityGroups",
+          "ec2:DescribeVpcs"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Cluster policies allow MSK Replicator role to access clusters cross-region
+# Source cluster policy - uses specific ARN patterns for cluster/topic/group resources
+resource "aws_msk_cluster_policy" "source_for_replicator" {
+  cluster_arn = module.msk_usw.cluster_arn
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "ClusterPermissions"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.msk_replicator.arn }
+        Action    = ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster"]
+        Resource  = module.msk_usw.cluster_arn
+      },
+      {
+        Sid       = "TopicPermissions"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.msk_replicator.arn }
+        Action    = ["kafka-cluster:DescribeTopic", "kafka-cluster:ReadData"]
+        Resource  = "${replace(module.msk_usw.cluster_arn, ":cluster/", ":topic/")}/*"
+      },
+      {
+        Sid       = "GroupPermissions"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.msk_replicator.arn }
+        Action    = ["kafka-cluster:DescribeGroup", "kafka-cluster:AlterGroup"]
+        Resource  = "${replace(module.msk_usw.cluster_arn, ":cluster/", ":group/")}/*"
+      }
+    ]
+  })
+}
+
+# Target cluster policy
+resource "aws_msk_cluster_policy" "target_for_replicator" {
+  provider    = aws.us_east_1
+  cluster_arn = module.msk_use.cluster_arn
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "ClusterPermissions"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.msk_replicator.arn }
+        Action    = ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster", "kafka-cluster:AlterCluster"]
+        Resource  = module.msk_use.cluster_arn
+      },
+      {
+        Sid       = "TopicPermissions"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.msk_replicator.arn }
+        Action    = ["kafka-cluster:CreateTopic", "kafka-cluster:DescribeTopic", "kafka-cluster:AlterTopic", "kafka-cluster:WriteData", "kafka-cluster:ReadData"]
+        Resource  = "${replace(module.msk_use.cluster_arn, ":cluster/", ":topic/")}/*"
+      },
+      {
+        Sid       = "GroupPermissions"
+        Effect    = "Allow"
+        Principal = { AWS = aws_iam_role.msk_replicator.arn }
+        Action    = ["kafka-cluster:DescribeGroup", "kafka-cluster:AlterGroup"]
+        Resource  = "${replace(module.msk_use.cluster_arn, ":cluster/", ":group/")}/*"
+      }
+    ]
+  })
+}
+
+# MSK Replicator - created in target region (us-east-1), depends on cluster policies
 module "msk_replicator" {
-  source                    = "./modules/msk-replicator"
-  replicator_name           = "dr-lab-usw-to-use"
-  source_msk_arn            = module.msk_usw.cluster_arn
-  target_msk_arn            = module.msk_use.cluster_arn
-  source_subnet_ids         = module.usw_center_vpc.data_subnet_ids
-  target_subnet_ids         = module.use_center_vpc.data_subnet_ids
-  source_security_group_ids = [module.msk_usw.security_group_id]
-  target_security_group_ids = [module.msk_use.security_group_id]
-  tags                      = { Component = "replication" }
+  source                     = "./modules/msk-replicator"
+  replicator_name            = "dr-lab-usw-to-use"
+  source_msk_arn             = module.msk_usw.cluster_arn
+  target_msk_arn             = module.msk_use.cluster_arn
+  source_subnet_ids          = module.usw_center_vpc.data_subnet_ids
+  target_subnet_ids          = module.use_center_vpc.data_subnet_ids
+  source_security_group_ids  = [module.msk_usw.security_group_id]
+  target_security_group_ids  = [module.msk_use.security_group_id]
+  service_execution_role_arn = aws_iam_role.msk_replicator.arn
+  tags                       = { Component = "replication" }
+  providers = {
+    aws = aws.us_east_1
+  }
+  depends_on = [
+    aws_msk_cluster_policy.source_for_replicator,
+    aws_msk_cluster_policy.target_for_replicator,
+  ]
 }
 
 # =============================================================================

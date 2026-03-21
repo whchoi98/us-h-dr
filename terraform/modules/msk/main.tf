@@ -100,6 +100,16 @@ resource "aws_msk_cluster" "this" {
         volume_size = 100
       }
     }
+
+    connectivity_info {
+      vpc_connectivity {
+        client_authentication {
+          sasl {
+            iam = true
+          }
+        }
+      }
+    }
   }
 
   encryption_info {

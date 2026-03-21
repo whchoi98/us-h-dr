@@ -1,0 +1,89 @@
+---
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: use-eks
+  region: us-east-1
+  version: "1.33"
+  tags:
+    Environment: dr-lab
+    Project: us-h-dr
+    ManagedBy: eksctl
+
+vpc:
+  id: "vpc-0a6a6702d51919674"
+  subnets:
+    public:
+      us-east-1a:
+        id: "subnet-0958620526c43171f"
+      us-east-1b:
+        id: "subnet-0e8bc494c59458d55"
+    private:
+      us-east-1a:
+        id: "subnet-0828e2bae3e9a8955"
+      us-east-1b:
+        id: "subnet-078991a06ea5d9f90"
+
+secretsEncryption:
+  keyARN: arn:aws:kms:us-east-1:061525506239:key/1f67d12c-0c48-4746-b259-2f6e1be6e9ac
+
+managedNodeGroups:
+  - name: ng-main
+    instanceType: t4g.2xlarge
+    desiredCapacity: 4
+    minSize: 2
+    maxSize: 8
+    volumeSize: 50
+    volumeType: gp3
+    volumeEncrypted: true
+    amiFamily: AmazonLinux2023
+    labels:
+      nodegroup-type: main
+    tags:
+      Environment: dr-lab
+      Project: us-h-dr
+    privateNetworking: true
+    subnets:
+      - "subnet-0828e2bae3e9a8955"
+      - "subnet-078991a06ea5d9f90"
+    ssh:
+      enableSsm: true
+    iam:
+      withAddonPolicies:
+        imageBuilder: true
+        autoScaler: true
+        ebs: true
+        efs: true
+        awsLoadBalancerController: true
+        cloudWatch: true
+
+cloudWatch:
+  clusterLogging:
+    enableTypes:
+      - api
+      - audit
+      - authenticator
+      - controllerManager
+      - scheduler
+
+iam:
+  withOIDC: true
+
+addons:
+  - name: vpc-cni
+    attachPolicyARNs:
+      - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+  - name: coredns
+    version: latest
+  - name: kube-proxy
+    version: latest
+  - name: aws-ebs-csi-driver
+    wellKnownPolicies:
+      ebsCSIController: true
+  - name: aws-efs-csi-driver
+    version: latest
+  - name: amazon-cloudwatch-observability
+    version: latest
+  - name: eks-pod-identity-agent
+    version: latest

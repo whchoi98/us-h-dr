@@ -1193,6 +1193,13 @@ module "msk_connect_mongo_usw" {
 }
 
 # MongoDB Sink Connector for US-E (MSK -> MongoDB EC2)
+# US-E needs its own S3 bucket in us-east-1 (MSK Connect requires same-region S3)
+resource "aws_s3_bucket" "connector_plugins_use" {
+  provider = aws.us_east_1
+  bucket   = "dr-lab-connector-plugins-use-${data.aws_caller_identity.current.account_id}"
+  tags     = { Component = "data" }
+}
+
 module "msk_connect_mongo_use" {
   source                = "./modules/msk-connect"
   connector_name        = "dr-lab-mongo-sink-use"
@@ -1201,7 +1208,7 @@ module "msk_connect_mongo_use" {
   msk_bootstrap_servers = module.msk_use.bootstrap_brokers_iam
   subnet_ids            = module.use_center_vpc.data_subnet_ids
   security_group_ids    = [aws_security_group.sg_msk_connect_use.id]
-  plugin_s3_bucket      = aws_s3_bucket.connector_plugins.id
+  plugin_s3_bucket      = aws_s3_bucket.connector_plugins_use.id
   plugin_s3_key         = "plugins/mongodb-sink-connector.zip"
   worker_count          = 1
   connector_configuration = {

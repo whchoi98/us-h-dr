@@ -939,7 +939,7 @@ resource "aws_iam_role" "msk_replicator" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Action    = "sts:AssumeRole"
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
       Effect    = "Allow"
       Principal = { Service = "kafka.amazonaws.com" }
     }]
@@ -1025,29 +1025,37 @@ resource "aws_iam_role_policy" "msk_replicator" {
   })
 }
 
-# Cluster policies allow MSK Replicator role to access clusters cross-region
-# Source cluster policy - uses specific ARN patterns for cluster/topic/group resources
+# Cluster policies allow MSK Replicator to access clusters cross-region.
+# CRITICAL: Cross-region replicator requires Service principal (kafka.amazonaws.com)
+# for control plane API calls (DescribeCluster, CreateVpcConnection), not just the IAM role.
 resource "aws_msk_cluster_policy" "source_for_replicator" {
   cluster_arn = module.msk_usw.cluster_arn
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "ClusterPermissions"
+        Sid       = "ReplicatorServiceAccess"
+        Effect    = "Allow"
+        Principal = { Service = "kafka.amazonaws.com" }
+        Action    = ["kafka:CreateVpcConnection", "kafka:GetBootstrapBrokers", "kafka:DescribeCluster", "kafka:DescribeClusterV2"]
+        Resource  = module.msk_usw.cluster_arn
+      },
+      {
+        Sid       = "ReplicatorRoleCluster"
         Effect    = "Allow"
         Principal = { AWS = aws_iam_role.msk_replicator.arn }
         Action    = ["kafka-cluster:Connect", "kafka-cluster:DescribeCluster"]
         Resource  = module.msk_usw.cluster_arn
       },
       {
-        Sid       = "TopicPermissions"
+        Sid       = "ReplicatorRoleTopic"
         Effect    = "Allow"
         Principal = { AWS = aws_iam_role.msk_replicator.arn }
         Action    = ["kafka-cluster:DescribeTopic", "kafka-cluster:ReadData"]
         Resource  = "${replace(module.msk_usw.cluster_arn, ":cluster/", ":topic/")}/*"
       },
       {
-        Sid       = "GroupPermissions"
+        Sid       = "ReplicatorRoleGroup"
         Effect    = "Allow"
         Principal = { AWS = aws_iam_role.msk_replicator.arn }
         Action    = ["kafka-cluster:DescribeGroup", "kafka-cluster:AlterGroup"]
@@ -1246,9 +1254,11 @@ module "msk_connect_mongo_use" {
   plugin_s3_bucket      = aws_s3_bucket.connector_plugins_use.id
   plugin_s3_key         = "plugins/mongodb-sink-connector.zip"
   worker_count          = 1
+  # US-E receives topics from MSK Replicator with source cluster alias prefix:
+  # {source_alias}.source.ecommerce.products — use topics.regex to match any prefix
   connector_configuration = {
     "tasks.max"                      = "2"
-    "topics"                         = "source.ecommerce.products,source.ecommerce.inventory"
+    "topics.regex"                   = ".*\\.source\\.ecommerce\\.(products|inventory)"
     "connection.uri"                 = "mongodb://${module.use_mongodb.private_ips["mongodb"]}:27017"
     "database"                       = "ecommerce"
     "key.converter"                  = "org.apache.kafka.connect.json.JsonConverter"

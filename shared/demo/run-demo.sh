@@ -337,7 +337,7 @@ do_pipeline() {
   banner "STEP 4: CDC Pipeline Status"
   local debezium="${ONPREM_DEBEZIUM_HOST}"
 
-  step "5.1" "Debezium Connector Status"
+  step "4.1" "Debezium Connector Status"
   for connector in demo-postgres-source demo-mongodb-source; do
     STATUS=$(curl -sf "http://${debezium}:8083/connectors/${connector}/status" 2>/dev/null || echo '{"error":"unreachable"}')
     STATE=$(echo "$STATUS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('connector',{}).get('state','UNKNOWN'))" 2>/dev/null || echo "ERROR")
@@ -348,7 +348,7 @@ do_pipeline() {
     fi
   done
 
-  step "5.2" "OnPrem Kafka Topics (CDC)"
+  step "4.2" "OnPrem Kafka Topics (CDC)"
   if [ -n "${ONPREM_KAFKA_BROKERS:-}" ]; then
     info "Checking for Debezium topics..."
     TOPICS=$(kubectl exec -n dr-demo deploy/demo-api -- bash -c \

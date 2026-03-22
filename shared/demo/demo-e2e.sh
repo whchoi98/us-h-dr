@@ -75,7 +75,7 @@ do_check() {
 
   section "EKS Clusters (3 clusters, 12 nodes)"
   for ctx in onprem-eks usw-eks use-eks; do
-    nodes=$(kubectl --context "$ctx" get nodes --no-headers 2>/dev/null | grep Ready | wc -l)
+    nodes=$(kubectl --context "$ctx" get nodes --no-headers 2>/dev/null | { grep Ready || true; } | wc -l)
     if [ "$nodes" -gt 0 ]; then
       ok "${ctx}: ${BOLD}${nodes} nodes${NC} Ready"
     else
@@ -84,7 +84,7 @@ do_check() {
   done
 
   section "Demo API (OnPrem EKS)"
-  pods=$(kubectl --context onprem-eks get pods -n dr-demo --no-headers 2>/dev/null | grep Running | wc -l)
+  pods=$(kubectl --context onprem-eks get pods -n dr-demo --no-headers 2>/dev/null | { grep Running || true; } | wc -l)
   if [ "$pods" -gt 0 ]; then
     ok "demo-api: ${BOLD}${pods} pods${NC} Running"
   else
@@ -158,7 +158,7 @@ do_seed() {
   # Auto-deploy Demo API if not running
   section "Ensure Demo API is Running"
   local api_pods
-  api_pods=$(kubectl get pods -n dr-demo --no-headers 2>/dev/null | grep Running | wc -l)
+  api_pods=$(kubectl get pods -n dr-demo --no-headers 2>/dev/null | { grep Running || true; } | wc -l)
   if [ "$api_pods" -eq 0 ]; then
     arrow "Deploying Demo API to OnPrem EKS..."
     kubectl create namespace dr-demo --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null
@@ -417,9 +417,9 @@ do_dr_failover() {
 
   section "② US-E DR 리전 데이터 확인"
   kubectl config use-context use-eks >/dev/null 2>&1
-  NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep Ready | wc -l)
+  NODES=$(kubectl get nodes --no-headers 2>/dev/null | { grep Ready || true; } | wc -l)
   ok "US-E EKS: ${BOLD}${NODES} nodes${NC} Ready"
-  PODS=$(kubectl get pods -n ui --no-headers 2>/dev/null | grep Running | wc -l)
+  PODS=$(kubectl get pods -n ui --no-headers 2>/dev/null | { grep Running || true; } | wc -l)
   ok "US-E App: ${BOLD}${PODS} pods${NC} Running (Retail Store)"
 
   section "③ DR 데이터 가용성"

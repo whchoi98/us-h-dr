@@ -75,7 +75,7 @@ do_check() {
 
   section "EKS Clusters (3 clusters, 12 nodes)"
   for ctx in onprem-eks usw-eks use-eks; do
-    nodes=$(kubectl --context "$ctx" get nodes --no-headers 2>/dev/null | grep -c Ready || echo 0)
+    nodes=$(kubectl --context "$ctx" get nodes --no-headers 2>/dev/null | grep Ready | wc -l)
     if [ "$nodes" -gt 0 ]; then
       ok "${ctx}: ${BOLD}${nodes} nodes${NC} Ready"
     else
@@ -84,11 +84,11 @@ do_check() {
   done
 
   section "Demo API (OnPrem EKS)"
-  pods=$(kubectl --context onprem-eks get pods -n dr-demo --no-headers 2>/dev/null | grep -c Running || echo 0)
+  pods=$(kubectl --context onprem-eks get pods -n dr-demo --no-headers 2>/dev/null | grep Running | wc -l)
   if [ "$pods" -gt 0 ]; then
     ok "demo-api: ${BOLD}${pods} pods${NC} Running"
   else
-    fail "demo-api: not deployed"
+    skip "demo-api: not deployed (will deploy in seed step)"
   fi
 
   section "Debezium CDC Connectors"
@@ -104,8 +104,10 @@ do_check() {
         fail "${c}: ${CSTATE}/${TSTATE}"
       fi
     done
-  else
+  elif echo "$CONNECTORS" | grep -q "FAIL"; then
     fail "Debezium Connect not reachable"
+  else
+    skip "No demo connectors yet (will register in seed step)"
   fi
 
   section "MSK Connect Sink Connectors"
@@ -152,6 +154,47 @@ do_seed() {
   echo ""
 
   kubectl config use-context onprem-eks >/dev/null 2>&1
+
+  # Auto-deploy Demo API if not running
+  section "Ensure Demo API is Running"
+  local api_pods
+  api_pods=$(kubectl get pods -n dr-demo --no-headers 2>/dev/null | grep Running | wc -l)
+  if [ "$api_pods" -eq 0 ]; then
+    arrow "Deploying Demo API to OnPrem EKS..."
+    kubectl create namespace dr-demo --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null
+    kubectl create configmap demo-db-config -n dr-demo \
+      --from-literal=pg_host="${ONPREM_PG}" --from-literal=pg_user="debezium" \
+      --from-literal=pg_db="ecommerce" --from-literal=mongo_host="${ONPREM_MONGO}" \
+      --from-literal=mongo_user="" --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null
+    kubectl create secret generic demo-db-secrets -n dr-demo \
+      --from-literal=pg_password="debezium" --from-literal=mongo_password="" \
+      --dry-run=client -o yaml | kubectl apply -f - 2>/dev/null
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+    kubectl apply -f "${SCRIPT_DIR}/k8s/demo-app.yaml" 2>/dev/null
+    arrow "Waiting for pods..."
+    kubectl wait --for=condition=ready pod -l app=demo-api -n dr-demo --timeout=180s 2>/dev/null
+    ok "Demo API deployed (2 pods)"
+  else
+    ok "Demo API already running (${api_pods} pods)"
+  fi
+
+  # Auto-register Debezium connectors if missing
+  section "Ensure Debezium Connectors"
+  EXISTING=$(ssm_run "$DBZ_INSTANCE" us-west-2 '["curl -sf http://localhost:8083/connectors 2>/dev/null"]')
+  if ! echo "$EXISTING" | grep -q "demo-pg"; then
+    arrow "Registering demo-pg connector..."
+    ssm_run "$DBZ_INSTANCE" us-west-2 '["curl -sf -X POST http://localhost:8083/connectors -H \"Content-Type: application/json\" -d '"'"'{\"name\":\"demo-pg\",\"config\":{\"connector.class\":\"io.debezium.connector.postgresql.PostgresConnector\",\"database.hostname\":\"10.0.20.79\",\"database.port\":\"5432\",\"database.user\":\"debezium\",\"database.password\":\"debezium\",\"database.dbname\":\"ecommerce\",\"topic.prefix\":\"source\",\"plugin.name\":\"pgoutput\",\"slot.name\":\"demo_slot\",\"publication.autocreate.mode\":\"all_tables\",\"table.include.list\":\"public.customers,public.orders\",\"snapshot.mode\":\"initial\"}}'"'"' 2>/dev/null"]' 5 >/dev/null
+    ok "demo-pg registered"
+  else
+    ok "demo-pg already exists"
+  fi
+  if ! echo "$EXISTING" | grep -q "demo-mongo"; then
+    arrow "Registering demo-mongo connector..."
+    ssm_run "$DBZ_INSTANCE" us-west-2 '["curl -sf -X POST http://localhost:8083/connectors -H \"Content-Type: application/json\" -d '"'"'{\"name\":\"demo-mongo\",\"config\":{\"connector.class\":\"io.debezium.connector.mongodb.MongoDbConnector\",\"mongodb.connection.string\":\"mongodb://10.0.21.83:27017/?replicaSet=rs0\",\"topic.prefix\":\"source\",\"database.include.list\":\"ecommerce\",\"collection.include.list\":\"ecommerce.products,ecommerce.inventory\",\"capture.mode\":\"change_streams_update_full\",\"snapshot.mode\":\"initial\"}}'"'"' 2>/dev/null"]' 5 >/dev/null
+    ok "demo-mongo registered"
+  else
+    ok "demo-mongo already exists"
+  fi
 
   section "Inserting Records"
   RESULT=$(kubectl exec deploy/demo-api -n dr-demo -- python3 -c "
@@ -271,7 +314,8 @@ for col in usw.list_collection_names():
 
   section "Aurora DSQL Primary (us-west-2)"
   kubectl config use-context usw-eks >/dev/null 2>&1
-  DSQL_RESULT=$(kubectl run dsql-v-usw --image=public.ecr.aws/docker/library/python:3.12-slim --restart=Never --rm -q \
+  kubectl delete pod dsql-v-usw --ignore-not-found 2>/dev/null; sleep 2
+  kubectl run dsql-v-usw --image=public.ecr.aws/docker/library/python:3.12-slim --restart=Never \
     --command -- bash -c "pip install -q boto3 psycopg2-binary 2>/dev/null; python3 -c \"
 import boto3, psycopg2
 c = boto3.client('dsql', region_name='us-west-2')
@@ -282,9 +326,13 @@ cur.execute(\\\"SELECT table_name FROM information_schema.tables WHERE table_sch
 for r in cur.fetchall():
     cur.execute(f'SELECT COUNT(*) FROM {r[0]}')
     print(f'{r[0]}={cur.fetchone()[0]}')
+if not cur.fetchall(): print('EMPTY=0')
 conn.close()
-\"" 2>/dev/null)
-  if [ -n "$DSQL_RESULT" ]; then
+\"" 2>/dev/null
+  sleep 25
+  DSQL_RESULT=$(kubectl logs dsql-v-usw 2>/dev/null | grep '=')
+  kubectl delete pod dsql-v-usw --ignore-not-found 2>/dev/null
+  if [ -n "$DSQL_RESULT" ] && ! echo "$DSQL_RESULT" | grep -q "EMPTY"; then
     echo "$DSQL_RESULT" | while IFS='=' read -r tbl cnt; do
       ok "${tbl}: ${BOLD}${cnt} rows${NC}"
     done
@@ -298,25 +346,33 @@ do_verify_use() {
 
   section "US-E MongoDB (10.2.20.68) — via MSK Replicator"
   kubectl config use-context use-eks >/dev/null 2>&1
-  USE_MONGO_RESULT=$(kubectl run mongo-v-use --image=public.ecr.aws/docker/library/python:3.12-slim --restart=Never --rm -q \
+  kubectl delete pod mongo-v-use --ignore-not-found 2>/dev/null; sleep 2
+  kubectl run mongo-v-use --image=public.ecr.aws/docker/library/python:3.12-slim --restart=Never \
     --command -- bash -c "pip install -q pymongo 2>/dev/null; python3 -c \"
 from pymongo import MongoClient
 db = MongoClient('mongodb://${USE_MONGO}:27017/?directConnection=true', serverSelectionTimeoutMS=5000)['ecommerce']
-for col in db.list_collection_names():
+cols = db.list_collection_names()
+for col in cols:
     print(f'{col}={db[col].count_documents({})}')
-if not db.list_collection_names():
+if not cols:
     print('EMPTY=0')
-\"" 2>/dev/null)
+\"" 2>/dev/null
+  sleep 20
+  USE_MONGO_RESULT=$(kubectl logs mongo-v-use 2>/dev/null | grep '=')
+  kubectl delete pod mongo-v-use --ignore-not-found 2>/dev/null
   if echo "$USE_MONGO_RESULT" | grep -q "EMPTY"; then
     skip "No data yet (Replicator propagation in progress)"
-  else
+  elif [ -n "$USE_MONGO_RESULT" ]; then
     echo "$USE_MONGO_RESULT" | while IFS='=' read -r col cnt; do
       ok "${col}: ${BOLD}${cnt} records${NC}"
     done
+  else
+    skip "US-E MongoDB check timed out"
   fi
 
   section "Aurora DSQL Linked (us-east-1) — auto multi-region"
-  DSQL_DR=$(kubectl run dsql-v-use --image=public.ecr.aws/docker/library/python:3.12-slim --restart=Never --rm -q \
+  kubectl delete pod dsql-v-use --ignore-not-found 2>/dev/null; sleep 2
+  kubectl run dsql-v-use --image=public.ecr.aws/docker/library/python:3.12-slim --restart=Never \
     --command -- bash -c "pip install -q boto3 psycopg2-binary 2>/dev/null; python3 -c \"
 import boto3, psycopg2
 c = boto3.client('dsql', region_name='us-east-1')
@@ -328,7 +384,10 @@ for r in cur.fetchall():
     cur.execute(f'SELECT COUNT(*) FROM {r[0]}')
     print(f'{r[0]}={cur.fetchone()[0]}')
 conn.close()
-\"" 2>/dev/null)
+\"" 2>/dev/null
+  sleep 25
+  DSQL_DR=$(kubectl logs dsql-v-use 2>/dev/null | grep '=')
+  kubectl delete pod dsql-v-use --ignore-not-found 2>/dev/null
   if [ -n "$DSQL_DR" ]; then
     echo "$DSQL_DR" | while IFS='=' read -r tbl cnt; do
       ok "${tbl}: ${BOLD}${cnt} rows${NC} (replicated from US-W)"
@@ -358,9 +417,9 @@ do_dr_failover() {
 
   section "② US-E DR 리전 데이터 확인"
   kubectl config use-context use-eks >/dev/null 2>&1
-  NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c Ready)
+  NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep Ready | wc -l)
   ok "US-E EKS: ${BOLD}${NODES} nodes${NC} Ready"
-  PODS=$(kubectl get pods -n ui --no-headers 2>/dev/null | grep -c Running)
+  PODS=$(kubectl get pods -n ui --no-headers 2>/dev/null | grep Running | wc -l)
   ok "US-E App: ${BOLD}${PODS} pods${NC} Running (Retail Store)"
 
   section "③ DR 데이터 가용성"

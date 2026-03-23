@@ -1,0 +1,98 @@
+{
+  "name": "us-h-dr",
+  "description": "Multi-Region DR Infrastructure agent — Terraform/CDK IaC, CDC replication (Debezium→Kafka→MSK→DSQL/MongoDB), EKS 1.33, 3 VPCs across us-west-2 and us-east-1",
+  "prompt": "file://.kiro/prompts/system-prompt.md",
+  "tools": [
+    "fs_read",
+    "fs_write",
+    "execute_bash",
+    "grep",
+    "glob",
+    "code",
+    "use_aws",
+    "web_search",
+    "web_fetch",
+    "use_subagent"
+  ],
+  "allowedTools": [
+    "fs_read",
+    "grep",
+    "glob",
+    "code"
+  ],
+  "toolsSettings": {
+    "fs_write": {
+      "allowedPaths": [
+        "terraform/**",
+        "cdk/**",
+        "shared/**",
+        "docs/**",
+        "tools/**",
+        ".kiro/**",
+        "README.md"
+      ],
+      "deniedPaths": [
+        "terraform/.terraform/**",
+        "cdk/node_modules/**",
+        "cdk/cdk.out/**",
+        ".git/**"
+      ]
+    },
+    "execute_bash": {
+      "allowedCommands": [
+        "terraform fmt",
+        "terraform validate",
+        "terraform plan",
+        "terraform init",
+        "terraform output",
+        "npx tsc --noEmit",
+        "npx cdk list",
+        "npx cdk synth",
+        "npx cdk deploy",
+        "npm install",
+        "npm run",
+        "git log",
+        "git status",
+        "git diff",
+        "git add",
+        "git commit",
+        "bash -n",
+        "chmod"
+      ],
+      "autoAllowReadonly": true
+    }
+  },
+  "resources": [
+    "file://README.md",
+    "file://terraform/main.tf",
+    "file://terraform/variables.tf",
+    "file://terraform/providers.tf",
+    "file://cdk/bin/app.ts",
+    "file://cdk/lib/config.ts",
+    "file://docs/architecture.md",
+    "skill://.kiro/skills/code-review.md",
+    "skill://.kiro/skills/refactor.md",
+    "skill://.kiro/skills/release.md",
+    "skill://.kiro/skills/sync-docs.md",
+    "skill://.kiro/skills/terraform-guide.md",
+    "skill://.kiro/skills/cdk-guide.md",
+    "skill://.kiro/skills/shared-guide.md",
+    "skill://.kiro/skills/docs-guide.md"
+  ],
+  "hooks": {
+    "agentSpawn": [
+      {
+        "command": "echo \"Project: us-h-dr | $(git -C /home/ec2-user/my-project/us-h-dr log --oneline -1 2>/dev/null || echo 'no git')\"",
+        "description": "Show project status on agent start"
+      }
+    ],
+    "postToolUse": [
+      {
+        "matcher": "fs_write",
+        "command": "bash .kiro/hooks/check-doc-sync.sh",
+        "description": "Detect missing documentation after file writes"
+      }
+    ]
+  },
+  "welcomeMessage": "us-h-dr Multi-Region DR Infrastructure agent ready. Terraform (16 modules), CDK (21 stacks), CDC pipeline (Debezium→Kafka→MSK→DSQL/MongoDB)."
+}

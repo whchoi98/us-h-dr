@@ -81,9 +81,9 @@ resource "aws_instance" "db" {
   }
 
   user_data = templatefile("${path.module}/${each.value.user_data_file}", {
-    broker_id         = try(each.value.name, "")
-    private_ip        = ""
-    zookeeper_connect = ""
+    broker_id     = try(regex("[0-9]+$", each.key), "0")
+    quorum_voters = var.kafka_quorum_voters
+    cluster_id    = var.kafka_cluster_id
   })
 
   tags = merge(var.tags, {

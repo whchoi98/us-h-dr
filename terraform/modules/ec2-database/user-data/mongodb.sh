@@ -27,4 +27,7 @@ replication:
 MONGOCFG
 systemctl enable mongod && systemctl start mongod
 sleep 5
-mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+# Initialize replica set with actual private IP (not localhost)
+# Debezium requires the advertised host to be reachable from external nodes
+PRIV_IP=$(hostname -I | awk '{print $1}')
+mongosh --eval "rs.initiate({_id:'rs0',members:[{_id:0,host:'$${PRIV_IP}:27017'}]})"

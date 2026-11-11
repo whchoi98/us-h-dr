@@ -1,0 +1,63 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  CloudFront distribution in front of the LBC-managed UI ALB (us-h-dr demo).
+  ALB ingress restriction (CloudFront origin-facing prefix list) and /actuator
+  blocking are owned by the Ingress annotations in deploy-lbc-and-app.sh.
+  This template intentionally does NOT add security group rules: the ALB SG is
+  managed by the AWS Load Balancer Controller, which reverts out-of-band edits
+  on resync, and a duplicate prefix-list rule would fail stack creation.
+
+Parameters:
+  ALBDnsName:
+    Type: String
+    Description: UI ALB DNS name (from kubectl get ingress -n ui)
+
+Resources:
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub "us-h-dr demo UI (${ALBDnsName})"
+        Origins:
+          - Id: ALBOrigin
+            DomainName: !Ref ALBDnsName
+            CustomOriginConfig:
+              HTTPPort: 80
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 5
+        DefaultCacheBehavior:
+          TargetOriginId: ALBOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          ForwardedValues:
+            QueryString: true
+            Cookies:
+              Forward: all
+            Headers:
+              - '*'
+          MinTTL: 0
+          DefaultTTL: 0
+          MaxTTL: 0
+        PriceClass: PriceClass_200
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+      Tags:
+        - Key: Name
+          Value: us-h-dr-demo-ui
+        - Key: Project
+          Value: us-h-dr
+        - Key: Environment
+          Value: lab
+
+Outputs:
+  CloudFrontURL:
+    Description: CloudFront URL for the demo UI
+    Value: !Sub "https://${CloudFrontDistribution.DomainName}"
+
+  CloudFrontDomainName:
+    Description: CloudFront domain name
+    Value: !GetAtt CloudFrontDistribution.DomainName

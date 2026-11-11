@@ -117,10 +117,71 @@ deploy_app_with_cf() {
 
   kubectl config use-context "$ctx"
 
-  # Deploy base-application from aws_lab_infra
-  info "Deploying base-application (Retail Store Sample)..."
-  kubectl apply -k "${LAB_INFRA}/shared/base-application/" 2>&1 | tail -5
-  ok "App manifests applied"
+  # CloudFront origin-facing prefix list — required BEFORE the Ingress is applied
+  # so the ALB is never created with the LBC default (0.0.0.0/0).
+  local cf_prefix
+  cf_prefix=$(aws ec2 describe-managed-prefix-lists --region "$region" \
+    --query "PrefixLists[?PrefixListName=='com.amazonaws.global.cloudfront.origin-facing'].PrefixListId" \
+    --output text 2>/dev/null)
+  if [[ ! "$cf_prefix" =~ ^pl-[0-9a-f]+$ ]]; then
+    echo -e "  ${R}✗${NC} CloudFront prefix list not found in ${region} — refusing to deploy a public ALB"
+    return 1
+  fi
+
+  # Deploy base-application from aws_lab_infra through a hardening overlay.
+  # The ALB SG is owned by the AWS Load Balancer Controller: any CLI edit to it is
+  # reverted on the next resync (~10h), so restrictions MUST be Ingress annotations.
+  #   - security-group-prefix-lists: allow CloudFront only (no 0.0.0.0/0 default)
+  #   - /actuator(/*) answered with 404 at the ALB (inserted before "/")
+  # ALB health checks and Prometheus scraping hit the pod directly, so they are unaffected.
+  info "Deploying base-application (Retail Store Sample) with ALB hardening overlay..."
+  local overlay base_rel
+  overlay=$(mktemp -d)
+  base_rel=$(realpath --relative-to="$overlay" "${LAB_INFRA}/shared/base-application")
+  cat > "${overlay}/kustomization.yaml" <<EOF
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ${base_rel}
+patches:
+  - target:
+      group: networking.k8s.io
+      version: v1
+      kind: Ingress
+      name: ui-ingress
+      namespace: ui
+    patch: |-
+      - op: add
+        path: /metadata/annotations/alb.ingress.kubernetes.io~1security-group-prefix-lists
+        value: ${cf_prefix}
+      - op: add
+        path: /metadata/annotations/alb.ingress.kubernetes.io~1actions.block-actuator
+        value: '{"type":"fixed-response","fixedResponseConfig":{"contentType":"text/plain","statusCode":"404","messageBody":"Not Found"}}'
+      - op: add
+        path: /spec/rules/0/http/paths/0
+        value:
+          path: /actuator
+          pathType: Prefix
+          backend:
+            service:
+              name: block-actuator
+              port:
+                name: use-annotation
+EOF
+
+  # Fail closed: never apply an Ingress that lacks the restriction.
+  # Render into a variable first — `kubectl kustomize | grep -q` can SIGPIPE under pipefail.
+  local rendered
+  if ! rendered=$(kubectl kustomize "$overlay") || \
+     ! grep -q "security-group-prefix-lists: ${cf_prefix}" <<<"$rendered" || \
+     ! grep -q "name: block-actuator" <<<"$rendered"; then
+    rm -rf "$overlay"
+    echo -e "  ${R}✗${NC} Hardening overlay did not render — aborting"
+    return 1
+  fi
+  kubectl apply -k "$overlay" 2>&1 | tail -5
+  rm -rf "$overlay"
+  ok "App manifests applied (Ingress: CloudFront prefix list ${cf_prefix}, /actuator blocked)"
 
   # Wait for pods
   info "Waiting for UI pod..."
@@ -144,39 +205,30 @@ deploy_app_with_cf() {
     return
   fi
 
-  # ALB SG — restrict to CloudFront Prefix List
-  local cf_prefix
-  cf_prefix=$(aws ec2 describe-managed-prefix-lists --region "$region" \
-    --query "PrefixLists[?PrefixListName=='com.amazonaws.global.cloudfront.origin-facing'].PrefixListId" \
-    --output text 2>/dev/null)
-
-  local alb_sg
-  alb_sg=$(aws elbv2 describe-load-balancers --region "$region" \
-    --query "LoadBalancers[?DNSName=='${alb}'].SecurityGroups[0]" --output text 2>/dev/null)
-
-  if [ -n "$alb_sg" ] && [ "$alb_sg" != "None" ]; then
-    # Remove 0.0.0.0/0
-    aws ec2 revoke-security-group-ingress --group-id "$alb_sg" --region "$region" \
-      --ip-permissions '[{"IpProtocol":"tcp","FromPort":80,"ToPort":80,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]' 2>/dev/null && \
-      ok "Removed 0.0.0.0/0 from ALB SG" || info "0.0.0.0/0 already removed"
-
-    # Add CloudFront Prefix List
-    aws ec2 authorize-security-group-ingress --group-id "$alb_sg" --region "$region" \
-      --ip-permissions "[{\"IpProtocol\":\"tcp\",\"FromPort\":80,\"ToPort\":80,\"PrefixListIds\":[{\"PrefixListId\":\"${cf_prefix}\",\"Description\":\"HTTP from CloudFront only\"}]}]" 2>/dev/null && \
-      ok "CloudFront Prefix List added to ALB SG" || info "Prefix List already set"
+  # Verify (read-only) that LBC applied the restriction — no 0.0.0.0/0 on any ALB SG
+  local alb_sgs open_sgs
+  alb_sgs=$(aws elbv2 describe-load-balancers --region "$region" \
+    --query "LoadBalancers[?DNSName=='${alb}'].SecurityGroups[]" --output text 2>/dev/null)
+  if [ -n "$alb_sgs" ]; then
+    # shellcheck disable=SC2086  # word splitting intended: list of SG IDs
+    open_sgs=$(aws ec2 describe-security-groups --region "$region" --group-ids $alb_sgs \
+      --query "SecurityGroups[?IpPermissions[?IpRanges[?CidrIp=='0.0.0.0/0']]].GroupId" --output text 2>/dev/null)
+    if [ -n "$open_sgs" ]; then
+      echo -e "  ${R}✗${NC} ALB SG still open to 0.0.0.0/0 (${open_sgs}) — check LBC logs before exposing via CloudFront"
+      return 1
+    fi
+    ok "ALB SG restricted to CloudFront prefix list (managed by LBC)"
   fi
 
-  # CloudFront via CloudFormation
+  # CloudFront via CloudFormation (distribution only — SG rules are owned by LBC)
   local stack_name="dr-lab-cf-${label}"
   info "Creating CloudFront Distribution (${stack_name})..."
 
   aws cloudformation deploy \
     --stack-name "$stack_name" \
-    --template-file "${LAB_INFRA}/shared/cloudfront-alb-protection.yaml" \
+    --template-file "${DEMO_DIR}/cfn/cloudfront-ui.yaml" \
     --parameter-overrides \
       ALBDnsName="${alb}" \
-      ALBSecurityGroupId="${alb_sg}" \
-      CloudFrontPrefixListId="${cf_prefix}" \
     --region "$region" \
     --no-fail-on-empty-changeset 2>&1 | tail -3
 
@@ -186,7 +238,7 @@ deploy_app_with_cf() {
 
   ok "CloudFront: ${cf_url}"
   echo -e "  ${BOLD}🌐 ${label} URL: ${cf_url}${NC}"
-  echo -e "  ${DIM}🔒 Security: CloudFront(HTTPS) → ALB(Prefix List + X-Lab-Secret) → EKS Pod${NC}"
+  echo -e "  ${DIM}🔒 Security: CloudFront(HTTPS) → ALB(CloudFront Prefix List via LBC, /actuator → 404) → EKS Pod${NC}"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

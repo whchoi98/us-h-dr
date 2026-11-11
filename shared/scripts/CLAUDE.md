@@ -10,7 +10,7 @@ Operational shell scripts and Python utilities for infrastructure setup, data ge
 - `setup-mirrormaker2.sh` - Configure and start MirrorMaker 2
 - `validate-replication.sh` - End-to-end CDC pipeline validation
 - `deploy-app.sh` - Deploy sample app to EKS with ALB Ingress
-- `cloudfront-protection.sh` - Add CloudFront prefix list to ALB SG
+- `cloudfront-protection.sh` - Add CloudFront prefix list to a non-LBC ALB SG (refuses LBC-managed SGs — see ADR-002)
 - `eks-create-cluster.sh` - Create EKS cluster via eksctl config
 - `eks-setup-env.sh` - Source to set EKS environment variables
 - `requirements.txt` - Python dependencies (pinned versions)

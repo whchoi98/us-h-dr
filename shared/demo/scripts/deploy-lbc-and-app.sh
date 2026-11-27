@@ -9,7 +9,7 @@ set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEMO_DIR="$(dirname "$SCRIPT_DIR")"
-LAB_INFRA="/home/ec2-user/my-project/aws_lab_infra"
+LAB_INFRA="/home/ec2-user/my-project/infra/aws_lab_infra"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 LBC_VERSION="v3.1.0"
 POLICY_NAME="AWSLoadBalancerControllerIAMPolicy"
